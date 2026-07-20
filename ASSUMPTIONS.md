@@ -23,16 +23,57 @@ any specific vendor SDK.
 **Status:** Resolved — build-vs-buy decision made (see `md/progress.md` §2a, `design.md` §10.6)
 **What was built:** `extract_text()` (`intake_extraction/pdf_text.py`) uses `pypdf` to read a real
 PDF's text layer. Bytes that don't start with the `%PDF-` header are passed through as
-already-plain-text, which keeps non-PDF test fixtures (and any future plain-text channel) working
-without wrapping every input in a real PDF container. Returns `None` (routes to manual review,
-FR-4) for encrypted PDFs, corrupted/unreadable PDFs, and PDFs with no extractable text layer at
-all (e.g. a scanned/image-only page) — this module does not attempt OCR.
-**What a real implementation must satisfy:** already satisfied for text-layer PDFs; OCR for
-scanned/image-only resumes is out of scope here and still routes to manual review, which is
-consistent with FR-4's "unparseable → manual queue" rule rather than a gap.
+already-plain-text-or-image, which keeps non-PDF test fixtures (and any future plain-text channel)
+working without wrapping every input in a real PDF container. Returns `None` (routes to manual
+review, FR-4) for encrypted PDFs, corrupted/unreadable PDFs, and PDFs with no extractable text
+layer at all (e.g. a scanned/image-only page) — **this module does not rasterize a PDF page**, so
+a scanned/image-only PDF is still unparseable regardless of the OCR capability described below
+(consistent with `test.md` T1.6's explicit "non-OCR" wording for that specific case).
+**What a real implementation must satisfy:** already satisfied for text-layer PDFs; rasterizing a
+scanned/image-only PDF page to run it through OCR is out of scope here and still routes to manual
+review, which is consistent with FR-4's "unparseable → manual queue" rule rather than a gap.
 **Why this choice:** `pypdf` handles the common case (a text-based PDF export) with no vendor
 dependency or network call, and the manual-review fallback covers the scanned/OCR case FR-4
 already requires human handling for.
+**Fixed 2026-07-20:** the non-PDF fallback originally decoded bytes as UTF-8 with
+`errors="replace"`, so an arbitrary binary file (e.g. an image submitted with a `.pdf` extension)
+silently decoded into replacement-character garbage instead of being rejected — it then sailed
+through extraction as an empty-but-accepted candidate record with no manual-review flag at all.
+The fallback now decodes strictly and returns `None` (→ manual review, FR-4) on
+`UnicodeDecodeError`. Found by manually running a real non-PDF file through the pipeline; see
+`tests/intake_extraction/test_pdf_text.py::test_non_pdf_binary_that_is_not_valid_text_is_unparseable`.
+
+## Image OCR (a resume submitted directly as a JPEG/PNG/GIF/BMP/WEBP)
+
+**Status:** Resolved on the free/offline side only — cloud OCR remains a live alternative
+(`md/progress.md` §2a, `design.md` §10.6)
+**What was built:** `intake_extraction/ocr.py` — `is_image()` detects a raster image by magic
+bytes, `extract_text()` runs it through Tesseract via `pytesseract` (added as a regular
+dependency, alongside `pytesseract`'s required system binary — see below). Wired into
+`pdf_text.extract_text()`'s dispatch, and the `LocalFolderChannelAdapter` stub now also globs
+image extensions, not just `*.pdf`. Returns `None` (routes to manual review, FR-4) if the image
+can't be decoded or Tesseract can't be found.
+**System dependency:** this is not a pure-Python `pip install` — it requires the Tesseract binary
+installed on the machine (here: `winget install --id UB-Mannheim.TesseractOCR`). Because the
+winget installer doesn't reliably land on `PATH` in an already-open shell, `ocr.py` also tries the
+package's standard Windows install locations as a fallback (`_WINDOWS_FALLBACK_TESSERACT_PATHS`).
+Test coverage that actually invokes OCR is skipped (`pytest.mark.skipif`, via
+`ocr.tesseract_available()`) on any machine without the binary, so the mandatory pytest gate still
+passes without it — only `is_image()`'s pure byte-sniffing is unconditionally tested.
+**Accuracy tradeoff (observed, not theoretical):** running Tesseract against a real-world resume
+template (icons, a colored sidebar, a timeline layout) produced meaningfully corrupted text —
+"Work History" read back as "work tistory" (missing the new `work\s+history` alias below), several
+lines fused with adjacent icon glyphs into nonsense tokens, and one section's content spilled into
+the wrong field as a result. A clean single-column, plain-text-on-white-background resume OCRs
+close to perfectly by comparison (see `tests/intake_extraction/test_ocr.py`). This is the accuracy
+cost of the free/offline choice versus a managed cloud document-intelligence API (Azure AI Document
+Intelligence, AWS Textract) — those are trained specifically on document layouts and would likely
+handle icons/columns/sidebars far better, at the cost of an account, API key, and per-page cost
+above the free tier.
+**Why this default:** unblocks local testing/demoing of image-format resumes with no account,
+API key, or network dependency; revisit in favor of a cloud OCR provider once real accuracy
+requirements (NFR-1's ≥95% bar) are measured against real resume samples, not just this one
+template.
 
 ## Structured extraction (Skills/Projects/Experience/Education splitting)
 
@@ -49,6 +90,15 @@ enabled — this stub does **not** meet that bar and must not be used to drive r
 **Why this default:** whether to replace this regex heuristic with a managed document-intelligence
 API or a custom NLP model is still unresolved; a working stub lets every downstream module (dedup,
 gateway, eventually Module 2's scoring) be built and tested against a real interface now.
+**Fixed 2026-07-20:** the experience-section header regex only matched the literal word
+"experience" (optionally prefixed with "work"/"working"). A real-world resume using the equally
+common heading "Work History" or "Employment History" found no match, so the section boundary was
+never detected — everything from the previous header onward (in one observed case, the entire
+Skills section) was silently absorbed into the wrong field instead of the Experience section being
+populated. Added `work\s+history` and `employment\s+history` as recognized aliases. This heuristic
+splitter remains a stub — other real-world headings (e.g. "Professional Experience", "Career
+History") may still go unrecognized; see
+`tests/intake_extraction/test_extraction.py::test_work_history_header_is_recognized_as_experience`.
 
 ## Malware/sandbox scanning
 

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+from image_fixtures import build_image_with_text
 from pdf_fixtures import CORRUPTED_PDF_BYTES, build_pdf_with_text
 
 from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog
+from hr_digital_employee.intake_extraction import ocr
 from hr_digital_employee.intake_extraction.dedup import IdentityDedupService
 from hr_digital_employee.intake_extraction.extraction import ExtractionService
 from hr_digital_employee.intake_extraction.gateway import IngestionGateway
@@ -107,6 +110,34 @@ def test_t1_1b_valid_real_pdf_is_processed_end_to_end() -> None:
     )
     gateway, queue, _audit = _build_gateway(
         [_submission(pdf_bytes, email="e@example.com", name="Real Pdf")]
+    )
+    results = gateway.run_once()
+
+    assert len(results) == 1
+    assert len(queue) == 0
+    _candidate, extracted = results[0]
+    assert extracted.skills.value == ["Python, SQL"]
+
+
+@pytest.mark.skipif(
+    not ocr.tesseract_available(),
+    reason="Tesseract binary not found on this machine -- see ASSUMPTIONS.md",
+)
+def test_image_resume_is_ocrd_and_processed_end_to_end() -> None:
+    image_bytes = build_image_with_text(
+        [
+            "Skills:",
+            "Python, SQL",
+            "",
+            "Working Experience:",
+            "5 years at TechCorp",
+            "",
+            "Education:",
+            "BSc Computer Science",
+        ]
+    )
+    gateway, queue, _audit = _build_gateway(
+        [_submission(image_bytes, email="f@example.com", name="OCR Test")]
     )
     results = gateway.run_once()
 

@@ -1,6 +1,6 @@
 # HR Digital Employee — Development Progress
 
-**Last updated:** 2026-07-17
+**Last updated:** 2026-07-20
 **Source docs:** [requirement.md](./requirement.md), [design.md](./design.md), [modules/](./modules/)
 
 Status values used throughout: `Not Started` → `In Progress` → `Blocked` → `Done`
@@ -11,7 +11,7 @@ Status values used throughout: `Not Started` → `In Progress` → `Blocked` →
 
 | # | Module | Status | Open items (see §2 — stubbed in code, not blocking) | Module doc |
 |---|---|---|---|---|
-| 1 | Intake & Extraction | In Progress — core pipeline built, rough draft | Real channel integration and structured-field splitting still stubbed (PDF byte-to-text extraction is now real, via `pypdf`); malware scan and 200-resume validation not started | [module-1-intake-extraction.md](./modules/module-1-intake-extraction.md) |
+| 1 | Intake & Extraction | In Progress — core pipeline built, rough draft | Real channel integration and structured-field splitting still stubbed (PDF byte-to-text extraction is real via `pypdf`; image OCR is real via local Tesseract, cloud OCR not chosen); malware scan and 200-resume validation not started | [module-1-intake-extraction.md](./modules/module-1-intake-extraction.md) |
 | 2 | Scoring Engine | Not Started | — | [module-2-scoring-engine.md](./modules/module-2-scoring-engine.md) |
 | 3 | AI-Assisted Content Generation | Not Started | 2nd LLM provider not chosen (stubbed) | [module-3-ai-content-generation.md](./modules/module-3-ai-content-generation.md) |
 | 4 | Fairness & Compliance | Not Started | — | [module-4-fairness-compliance.md](./modules/module-4-fairness-compliance.md) |
@@ -20,12 +20,14 @@ Status values used throughout: `Not Started` → `In Progress` → `Blocked` →
 | 7 | Governance & Audit | In Progress — audit log interface only | Only AuditEvent/AuditLog built so far; SLA monitoring, talent pool, feedback storage, retention all not started; named owner not assigned | [module-7-governance-audit.md](./modules/module-7-governance-audit.md) |
 
 **Rough-draft code exists** as of this update: `src/hr_digital_employee/` (Python), covering Module
-1's full pipeline (channel adapters, real PDF text extraction via `pypdf`, injection screening,
-structured-field extraction, dedup, manual review queue, gateway orchestrator — the gateway now
-audit-logs every manual-review routing reason, not just suspected injection) and Module 7's
-`AuditEvent`/`AuditLog` interface + in-memory implementation. 32 tests, mypy --strict / ruff / ruff
-format all pass. See `ASSUMPTIONS.md` at the repo root for every stub this draft makes. Modules 2–6
-are empty placeholder packages only.
+1's full pipeline (channel adapters — now also picking up image files, not just PDFs — real PDF
+text extraction via `pypdf`, local image OCR via Tesseract, injection screening, structured-field
+extraction, dedup, manual review queue, gateway orchestrator — the gateway now audit-logs every
+manual-review routing reason, not just suspected injection) and Module 7's `AuditEvent`/`AuditLog`
+interface + in-memory implementation. 44 tests, mypy --strict / ruff / ruff format all pass (OCR
+tests skip gracefully on a machine without the Tesseract binary). See `ASSUMPTIONS.md` at the repo
+root for every stub this draft makes — including an observed, non-theoretical accuracy tradeoff for
+local OCR vs. a managed cloud provider. Modules 2–6 are empty placeholder packages only.
 
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
@@ -51,6 +53,9 @@ replaces the stub:
 - [ ] Data residency (design.md §10.5) — storage config stub
 - [x] Build vs. buy for PDF byte-to-text extraction (design.md §10.6) — built: `pypdf`
       (`intake_extraction/pdf_text.py`); see ASSUMPTIONS.md
+- [ ] Build vs. buy for image OCR (design.md §10.6) — free/offline side built: local Tesseract
+      (`intake_extraction/ocr.py`); cloud OCR (Azure AI Document Intelligence/AWS Textract) not
+      chosen — observed accuracy gap on real resume layouts, see ASSUMPTIONS.md — Module 1 stub
 - [ ] Build vs. buy for structured Skills/Projects/Experience/Education splitting (design.md
       §10.6) — still a regex-heuristic stub, separate decision from the PDF text-extraction one
       above — Module 1 stub
@@ -80,6 +85,9 @@ named person to exist), but the system should not go live until they're resolved
 - [x] Email intake adapter — stub only (`LocalFolderChannelAdapter`, reads a local folder; real Email connector not built)
 - [x] Teams intake adapter — same stub covers this (channel is a parameter, not a separate adapter yet)
 - [ ] Malware/sandbox scanning — not started
+- [x] Local image OCR (JPEG/PNG/GIF/BMP/WEBP) — real Tesseract via `pytesseract`; requires the
+      Tesseract binary on the machine; no rasterization of scanned/image-only PDFs (still routes
+      to manual review, per FR-4/test.md T1.6)
 - [x] Injection screening — heuristic stub (hidden-text stripping + instruction-pattern detection)
 - [x] Manual-review queue — in-memory only, no SLA monitoring yet
 - [x] Extraction: Skills / Projects / Experience / Education — heuristic stub, not the real parser

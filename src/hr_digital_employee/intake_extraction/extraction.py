@@ -20,7 +20,10 @@ PARSER_VERSION = "stub-0.1.0"
 _SECTION_HEADERS: dict[str, re.Pattern[str]] = {
     "skills": re.compile(r"skills?\s*:?\s*\n", re.IGNORECASE),
     "projects": re.compile(r"projects?\s*:?\s*\n", re.IGNORECASE),
-    "experience": re.compile(r"(?:work(?:ing)?\s+)?experience\s*:?\s*\n", re.IGNORECASE),
+    "experience": re.compile(
+        r"(?:(?:work(?:ing)?\s+)?experience|work\s+history|employment\s+history)\s*:?\s*\n",
+        re.IGNORECASE,
+    ),
     "education": re.compile(r"education\s*:?\s*\n", re.IGNORECASE),
 }
 

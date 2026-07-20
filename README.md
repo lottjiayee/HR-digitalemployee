@@ -5,9 +5,10 @@ built from an internal SOP with heavy emphasis on human-in-the-loop control, fai
 Hong Kong PDPO compliance.
 
 **Status:** Rough first-draft code now exists (`src/hr_digital_employee/`, Python) covering Module 1
-(Intake & Extraction) end-to-end — including real PDF text extraction via `pypdf`, not just a
-plain-text stand-in — and Module 7's audit-log interface — 32 tests, mypy --strict / ruff all
-passing. Modules 2–6 are still empty placeholders. See `ASSUMPTIONS.md` at the repo root for every
+(Intake & Extraction) end-to-end — including real PDF text extraction via `pypdf` and local image
+OCR via Tesseract, not just plain-text stand-ins — and Module 7's audit-log interface — 44 tests,
+mypy --strict / ruff all passing. Modules 2–6 are still empty placeholders. See `ASSUMPTIONS.md` at
+the repo root for every
 stub this draft makes, and `md/progress.md` for the live tracking checklist and current open
 decisions.
 
@@ -57,5 +58,9 @@ unattended run.
 
 ---
 
-**Last updated:** 2026-07-17 (gateway now audit-logs every manual-review routing reason, not just
-injection; PDF byte-to-text extraction is now real, via `pypdf`, instead of a naive UTF-8 decode)
+**Last updated:** 2026-07-20 (fixed two bugs found by manually running real-world files through the
+pipeline — non-PDF binaries no longer silently decode into garbage and sail through as
+empty-but-accepted candidates; the experience-section heuristic now also recognizes "Work
+History"/"Employment History" — and added local Tesseract OCR support for resumes submitted
+directly as a JPEG/PNG/GIF/BMP/WEBP image, with an observed accuracy tradeoff against a managed
+cloud OCR provider. See `ASSUMPTIONS.md` for detail.)

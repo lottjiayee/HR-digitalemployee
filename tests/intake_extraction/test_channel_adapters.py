@@ -20,6 +20,17 @@ def test_reads_pdf_files_from_folder(tmp_path: Path) -> None:
     assert submissions[0].file_bytes == b"Skills:\nPython\n"
 
 
+def test_reads_image_files_from_folder(tmp_path: Path) -> None:
+    (tmp_path / "resume1.jpg").write_bytes(b"fake-jpeg-bytes")
+    (tmp_path / "resume2.png").write_bytes(b"fake-png-bytes")
+    (tmp_path / "not_a_resume.txt").write_bytes(b"ignored")
+
+    adapter = LocalFolderChannelAdapter(tmp_path)
+    submissions = adapter.fetch_new_submissions()
+
+    assert {s.file_bytes for s in submissions} == {b"fake-jpeg-bytes", b"fake-png-bytes"}
+
+
 def test_missing_folder_returns_empty_list(tmp_path: Path) -> None:
     adapter = LocalFolderChannelAdapter(tmp_path / "does_not_exist")
 

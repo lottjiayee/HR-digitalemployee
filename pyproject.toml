@@ -9,6 +9,8 @@ description = "HR Digital Employee: automated resume screening and interview sch
 requires-python = ">=3.11"
 dependencies = [
     "pypdf>=5.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +31,10 @@ warn_unused_ignores = true
 disallow_any_generics = true
 mypy_path = "src"
 explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = "pytesseract"
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100

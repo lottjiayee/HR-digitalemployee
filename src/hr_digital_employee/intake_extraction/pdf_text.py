@@ -1,10 +1,9 @@
-"""PDF byte-to-text extraction (SOP 2.1, module-1 design.md §3.2 Extraction Service).
+"""Raw submission byte-to-text extraction (SOP 2.1, module-1 design.md §3.2 Extraction Service).
 
-Resolves the "build vs. buy" open decision (design.md §10.6, ASSUMPTIONS.md) on the build side:
-pypdf's text layer extraction, feeding the existing heuristic section-header splitter in
-extraction.py. This module only turns bytes into text -- it does not attempt OCR, so a
-scanned/image-only PDF has no extractable text layer and is treated the same as a corrupted or
-encrypted file: unparseable, routed to manual review (FR-4).
+Dispatches by format: a real PDF's text layer via pypdf; a standalone raster image (JPEG/PNG/
+GIF/BMP/WEBP) via Tesseract OCR (ocr.py); anything else passed through as plain text. This module
+does not rasterize a *scanned/image-only PDF* -- that has no extractable text layer and is treated
+the same as a corrupted or encrypted file: unparseable, routed to manual review (FR-4/test.md T1.6).
 """
 
 from __future__ import annotations
@@ -14,18 +13,28 @@ from io import BytesIO
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 
+from hr_digital_employee.intake_extraction import ocr
+
 PDF_MAGIC_BYTES = b"%PDF-"
 
 
 def extract_text(file_bytes: bytes) -> str | None:
-    """Return the PDF's text layer, or None if it cannot be read.
+    """Return the submission's text content, or None if it cannot be read.
 
-    Bytes that don't start with the PDF header are passed through as already-plain-text --
-    this keeps non-PDF test fixtures and any future plain-text channel adapter working without
-    wrapping every input in a real PDF container.
+    Bytes that are neither a PDF nor a recognized image format are passed through as
+    already-plain-text -- this keeps non-PDF test fixtures and any future plain-text channel
+    adapter working without wrapping every input in a real PDF container. A strict UTF-8 decode
+    is required for that fallback: an arbitrary unrecognized binary format is not valid UTF-8 and
+    must be treated as unparseable (FR-4) rather than silently decoded into replacement-character
+    garbage that would otherwise sail through extraction as an empty-but-accepted resume.
     """
     if not file_bytes.startswith(PDF_MAGIC_BYTES):
-        return file_bytes.decode("utf-8", errors="replace")
+        if ocr.is_image(file_bytes):
+            return ocr.extract_text(file_bytes)
+        try:
+            return file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
 
     try:
         reader = PdfReader(BytesIO(file_bytes))

@@ -14,6 +14,11 @@ from typing import Protocol
 
 from hr_digital_employee.intake_extraction.models import RawSubmission, SubmissionChannel
 
+_SUPPORTED_FILE_GLOBS = ("*.pdf", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.webp")
+"""Extensions this stub picks up -- mirrors what pdf_text.extract_text() can actually read
+(PDF text layer or OCR'd image); a real Email/Teams connector receives attachments by content,
+not by filename extension, so this glob is purely an artifact of the local-folder stub."""
+
 
 class ChannelAdapter(Protocol):
     """A source of new resume submissions."""
@@ -35,7 +40,8 @@ class LocalFolderChannelAdapter:
         submissions: list[RawSubmission] = []
         if not self._folder.exists():
             return submissions
-        for file_path in sorted(self._folder.glob("*.pdf")):
+        matches = (path for pattern in _SUPPORTED_FILE_GLOBS for path in self._folder.glob(pattern))
+        for file_path in sorted(matches):
             submissions.append(
                 RawSubmission(
                     channel=self._channel,

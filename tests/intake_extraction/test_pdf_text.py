@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+from image_fixtures import build_image_with_text
 from pdf_fixtures import (
     CORRUPTED_PDF_BYTES,
     build_blank_pdf,
@@ -9,6 +11,7 @@ from pdf_fixtures import (
     build_pdf_with_text,
 )
 
+from hr_digital_employee.intake_extraction import ocr
 from hr_digital_employee.intake_extraction.pdf_text import extract_text
 
 
@@ -35,3 +38,22 @@ def test_encrypted_pdf_is_unparseable() -> None:
 
 def test_corrupted_pdf_bytes_are_unparseable() -> None:
     assert extract_text(CORRUPTED_PDF_BYTES) is None
+
+
+def test_non_pdf_binary_that_is_not_valid_text_is_unparseable() -> None:
+    # A file that is neither a PDF nor a recognized image format, nor valid UTF-8 text, must not
+    # be silently decoded into replacement-character garbage -- it should route to manual review.
+    unrecognized_binary = b"\x00\x01\x02\x03\xff\xfe\x00\x01" * 4
+    assert extract_text(unrecognized_binary) is None
+
+
+@pytest.mark.skipif(
+    not ocr.tesseract_available(),
+    reason="Tesseract binary not found on this machine -- see ASSUMPTIONS.md",
+)
+def test_image_bytes_are_dispatched_to_ocr() -> None:
+    image_bytes = build_image_with_text(["Skills", "Python, SQL"])
+    text = extract_text(image_bytes)
+
+    assert text is not None
+    assert "Skills" in text
