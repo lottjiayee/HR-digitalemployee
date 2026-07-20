@@ -4,10 +4,16 @@ Automated resume screening/scoring and interview-scheduling coordination for an 
 built from an internal SOP with heavy emphasis on human-in-the-loop control, fairness testing, and
 Hong Kong PDPO compliance.
 
-**Status:** Planning/specification phase — no code has been written yet. A full audit of the
-documents below found several gaps (dropped SOP content, a couple of internal contradictions in
-`prompt.md`) that should be fixed before the autonomous build in `prompt.md` is actually run. See
-`md/progress.md` for the live tracking checklist.
+**Status:** Rough first-draft code now exists (`src/hr_digital_employee/`, Python) covering Module 1
+(Intake & Extraction) end-to-end — including real PDF text extraction via `pypdf`, not just a
+plain-text stand-in — and Module 7's audit-log interface — 32 tests, mypy --strict / ruff all
+passing. Modules 2–6 are still empty placeholders. See `ASSUMPTIONS.md` at the repo root for every
+stub this draft makes, and `md/progress.md` for the live tracking checklist and current open
+decisions.
+
+New to this project? Start with [GLOSSARY.md](GLOSSARY.md) — it explains the domain terms (JRP,
+four-fifths rule, tiers, etc.) and project-specific ones (Manus, stub-and-document, modules, waves)
+used throughout the docs below.
 
 ---
 
@@ -44,11 +50,12 @@ this README is up to date on it.
 ## Using prompt.md
 
 `md/prompt.md` is written to be handed to an autonomous coding agent to build the entire system
-with no human in the loop, using a Supervisor/Subagent pattern (one subagent per module) and
-mandatory mypy/ruff/pytest quality gates. It has **not been executed yet** — recommended first step
-is a dry run of Wave 1 (Modules 1 and 7) rather than a full unattended run, and the known issues
-from the latest audit should be fixed first (see Status above).
+with no human in the loop, using a Supervisor/Subagent pattern (one subagent per module, across 5
+dependency-ordered waves) and mandatory mypy/ruff/pytest quality gates. It has **not been executed
+yet** — recommended first step is a dry run of Wave 1 (Modules 1 and 7) rather than a full
+unattended run.
 
 ---
 
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-17 (gateway now audit-logs every manual-review routing reason, not just
+injection; PDF byte-to-text extraction is now real, via `pypdf`, instead of a naive UTF-8 decode)

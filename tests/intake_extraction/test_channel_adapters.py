@@ -1,0 +1,26 @@
+"""Tests for the local-folder stub channel adapter."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from hr_digital_employee.intake_extraction.channel_adapters import LocalFolderChannelAdapter
+from hr_digital_employee.intake_extraction.models import SubmissionChannel
+
+
+def test_reads_pdf_files_from_folder(tmp_path: Path) -> None:
+    (tmp_path / "resume1.pdf").write_bytes(b"Skills:\nPython\n")
+    (tmp_path / "not_a_resume.txt").write_bytes(b"ignored")
+
+    adapter = LocalFolderChannelAdapter(tmp_path, channel=SubmissionChannel.TEAMS)
+    submissions = adapter.fetch_new_submissions()
+
+    assert len(submissions) == 1
+    assert submissions[0].channel is SubmissionChannel.TEAMS
+    assert submissions[0].file_bytes == b"Skills:\nPython\n"
+
+
+def test_missing_folder_returns_empty_list(tmp_path: Path) -> None:
+    adapter = LocalFolderChannelAdapter(tmp_path / "does_not_exist")
+
+    assert adapter.fetch_new_submissions() == []

@@ -45,6 +45,9 @@ here pass.
 | T2.9 | NFR-5 | Produce a score, then upgrade the scoring-engine version, produce another score for the same candidate/round | Both scores are separately recorded with their respective engine version; original is not overwritten | |
 | T2.10 | NFR-5 | Attempt to score some candidates in an active hiring round on an old engine version and others on a new version | System either blocks this (enforces one version per round) or requires an explicit full re-score decision — never silently mixes | |
 | T2.11 | NFR-6 | Simulate a metric breach (e.g., inject a parsing-accuracy drop below threshold) | System automatically flips to human-assisted mode (scores advisory only) | |
+| T2.12 | FR-6 | Create a JRP for each of the 5 role-type presets without fine-tuning | Weights load exactly as: General 40/30/15/15, Senior technical 35/35/10/20, Junior/graduate 45/5/30/20, Managerial 25/30/15/30, Licensed/compliance 50/20/20/10 | |
+| T2.13 | FR-31 | Score candidates at 79%, 80%, 59%, and 60% total | 79%→Mid, 80%→High, 59%→Low, 60%→Mid (boundary values land on the correct side of the default 80/60 thresholds) | |
+| T2.14 | FR-27 | Score two candidates whose resumes describe the same skill using different phrasing (e.g., "led a team" vs. "team leadership") mapped in the skill ontology | Both resolve to the same underlying skill match, not one hit and one miss | |
 
 ---
 
@@ -76,6 +79,11 @@ here pass.
 | T4.7 | FR-23 | Simulate a non-hired candidate record reaching 24 months old | Record is automatically deleted or anonymized | |
 | T4.8 | FR-23 | Submit a consent-withdrawal request for a candidate in the talent pool | All talent-pool records (including tags/derived data) deleted within 30 days | |
 | T4.9 | Pre-deployment audit | Attempt to activate a new/materially changed JRP without a completed back-test | Activation is blocked until the back-test runs | |
+| T4.10 | FR-20 | Change an existing live JRP's weights or a must-have flag (outside the normal quarterly cycle) | An adverse-impact re-test is triggered immediately, not deferred to the next quarterly run | |
+| T4.11 | FR-25 | Candidate requests an explanation of their evaluation | Response is derived from the existing Matching Analysis only; no new scoring/re-evaluation occurs | |
+| T4.12 | FR-26 | Candidate requests access to and correction of their held data | Request is fulfilled through a defined workflow, not ad hoc | |
+| T4.13 | FR-27 | Update the skill-ontology mapping table | Module 2's next scoring run reflects the updated ontology; Module 2 cannot write back to the ontology table | |
+| T4.14 | FR-30 | Attempt to have Module 7's stored feedback flow into Module 2's scoring without passing this module's adverse-impact re-test | Blocked — no code path exists from feedback storage to the Scoring Engine absent an explicit, logged, tested approval | |
 
 ---
 
@@ -89,6 +97,7 @@ here pass.
 | T5.4 | FR-13 | Attempt to configure or trigger any automatic removal/filtering of low-scoring candidates | No such control exists in the UI or API | |
 | T5.5 | FR-14 | Perform a Pass action on a candidate without entering a reason | Action is blocked until a reason is provided | |
 | T5.6 | FR-14 | Perform a Pass/Reject action | Action is logged with actor, timestamp, and reason; visible in the audit trail (Module 7) | |
+| T5.7 | FR-11 | Open a candidate's full Candidate Summary Report | Total score, tier, Matching Analysis breakdown (which requirements met/missed), and factual summary are all present | |
 
 ---
 
@@ -126,6 +135,10 @@ here pass.
 | T7.6 | Layered retention (SOP 4.3) | Submit a data-erasure request for a candidate with a prior Pass/Reject decision | Identifiable resume/contact data is deleted; pseudonymized decision log is retained for its defined period | |
 | T7.7 | Incident routing | Simulate a channel outage (e.g., email connector down) | Alert fires to IT + named HR owner; system falls back to human-assisted mode; hiring workflow does not silently stop | |
 | T7.8 | Weekly review | Generate the weekly operational review report | Report includes queue volumes, injection flags, scheduling escalations, and incident follow-ups | |
+| T7.9 | FR-24 | Extract a candidate's skills/experience/education/industry | Talent-pool tags are generated automatically (e.g., `#Python`, `#5YearsExp`, `#MBA`, `#FinTech`) and are searchable | |
+| T7.10 | FR-28 | HR records post-interview feedback rating a candidate on a predefined competency dimension | Feedback is stored on the candidate's profile; attempt to trace any code path from this record to the Scoring Engine finds none | |
+| T7.11 | FR-29 | HR attempts to enter an undefined free-text label (e.g., "cultural fit") as a structured feedback field | Rejected as a structured field; only accepted as a supplementary remark | |
+| T7.12 | FR-29 | HR enters a valid predefined competency rating (e.g., communication = 4) | Accepted and stored against that dimension | |
 
 ---
 

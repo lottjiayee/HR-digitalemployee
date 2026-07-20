@@ -23,11 +23,19 @@ Module 7 for the scheduled deletion/anonymization mechanics.)*
 
 ## 3. Requirements Covered
 
-- **FR-20**: Four-fifths adverse-impact testing per JRP, pre-deployment and ≥quarterly thereafter
+- **FR-20**: Four-fifths adverse-impact testing per JRP, pre-deployment, ≥quarterly thereafter,
+  **and whenever that JRP's weights or must-have rules change**
 - **FR-21**: Demographic data voluntary, self-declared, stored separately, never a scoring input
 - **FR-22**: Collection notice (PICS) at intake; talent-pool consent separate/unbundled
 - **FR-23**: Non-hired candidate data auto-deletes/anonymizes at 24 months; withdrawal → deletion
   within 30 days
+- **FR-25**: Explainability on request — human-readable evaluation explanation derived from the
+  Matching Analysis (Module 5's Candidate Summary Report)
+- **FR-26**: Candidate access-to and correction-of their held personal data (PDPO right)
+- **FR-27**: Own and maintain the skill-ontology/synonym mapping table that Module 2's Scoring
+  Engine reads during keyword matching (phrasing/language-bias mitigation)
+- **FR-30**: Gate for any future proposal to use post-interview feedback (Module 7) as a scoring
+  input — must pass this module's adverse-impact testing before deployment
 
 ## 4. Key Design Constraints
 
@@ -45,6 +53,14 @@ Module 7 for the scheduled deletion/anonymization mechanics.)*
   transparent proxy) is used directly as a scoring input.
 - Jurisdictional layering: PDPO baseline, GDPR Article 22 rights for EU candidates, PIPL for
   Mainland China candidates, default to strictest framework when jurisdiction is undetermined.
+- Skill-ontology mapping (FR-27) is maintained here and read-only from Module 2 — this module owns
+  updates to the ontology; Module 2 never writes to it.
+- Explainability responses (FR-25) are generated from existing Matching Analysis data — this
+  module must not perform new scoring or re-derive a result, only explain the one already produced
+  by Module 2.
+- The feedback-loop gate (FR-30) is a one-way door: until a feedback-informed scoring change has
+  passed this module's adverse-impact testing and been logged, Module 7's stored feedback records
+  remain read-only context with no consumer other than a human reader.
 
 ## 5. Dependencies
 
@@ -64,12 +80,18 @@ Module 7 for the scheduled deletion/anonymization mechanics.)*
 - [ ] Statistical significance corroboration (chi-square / standardized difference)
 - [ ] Pre-deployment back-test against historical/sample data for new/changed JRPs
 - [ ] Quarterly re-test scheduler for live JRPs
+- [ ] Re-test trigger on any JRP weight/must-have change (not calendar-only)
 - [ ] Disparate-treatment review workflow (protected-characteristic/proxy check on JRP definitions)
 - [ ] PICS collection notice at intake (all channels)
 - [ ] Separate, unbundled talent-pool consent capture
 - [ ] 24-month retention auto-delete/anonymize job (coordinates with Module 7)
 - [ ] Consent-withdrawal → 30-day deletion workflow
 - [ ] Jurisdiction detection + default-strictest-framework logic (PDPO/GDPR/PIPL)
+- [ ] Skill-ontology/synonym mapping table + maintenance interface (consumed read-only by Module 2)
+- [ ] Explainability-on-request response generator (reads existing Matching Analysis only)
+- [ ] Access/correction request handling workflow
+- [ ] Feedback-to-scoring gate (blocks Module 7 feedback from reaching Module 2 without passing
+      this checklist's adverse-impact re-test first)
 
 ## 8. Testing
 

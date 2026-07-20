@@ -59,9 +59,13 @@ These are correctness properties, not style preferences. A build that fails any 
 ## 3. Autonomy Rules — How to Handle Every Open Decision
 
 The project owner explicitly resolved this in advance: **you are not permitted to pause, ask a
-question, or leave a gap.** Every place where `md/progress.md` §2 lists an open decision (cloud
-platform, second LLM provider, data residency, Manus API specifics, WhatsApp/ATS integration,
-named owner, etc.), follow this rule:
+question, or leave a gap.** `md/progress.md` §2 splits open items into two lists — **§2a
+(stubbable)** and **§2b (not stubbable)**. This prompt's rule always wins if the two files ever
+seem to disagree: §2a items never block the build (stub them, per below); §2b items (named
+operational owner, JRP ownership, Legal review, rollout sequencing, vendor/build path) are
+real-world facts, not code — the build proceeds without them, they only gate go-live, and no
+code-level workaround is needed or possible for them. Anything in §2a — cloud platform, second LLM
+provider, data residency, Manus API specifics, WhatsApp/ATS integration, etc. — follow this rule:
 
 > **Stub-and-document.** Build the real interface/abstraction the design calls for (e.g., a
 > `CalendarProvider` protocol, an `LLMProvider` protocol, a `StoragePort` protocol). Implement it
@@ -178,19 +182,21 @@ A module is not complete if any of these three fail. Fix the code, not the gate.
 1. Read all of `md/` in full.
 2. Scaffold the repo per §5; commit an empty-but-passing gate baseline (empty packages, `pyproject.toml`
    configured, gates green on a trivial hello-world test) before any module work starts.
-3. Determine dependency order from each module's §5:
+3. Determine dependency order from each module's §5 (verified against every module.md's actual
+   "Dependencies" section — do not re-derive this from scratch, use this table as authoritative):
    - Wave 1 (no unmet deps): Module 1 (Intake & Extraction), Module 7 (Governance & Audit — other
      modules depend on its logging interface existing, so build its interface early even though its
      own full feature set can develop in parallel).
-   - Wave 2: Module 2 (Scoring Engine, depends on Module 1), Module 3 (AI Content, depends on
-     Module 1 + Module 2's read interface).
-   - Wave 3: Module 4 (Fairness, depends on Module 2), Module 5 (Presentation, depends on Modules
-     2/3/4).
-   - Wave 4: Module 6 (Scheduling Coordination, depends on Module 5's shortlist/Pass action).
+   - Wave 2: Module 2 (Scoring Engine — depends on Module 1 only).
+   - Wave 3: Module 3 (AI Content — depends on Module 1 + Module 2's read interface) and Module 4
+     (Fairness — depends on Module 2's score/tier outcomes). These two may run concurrently: neither
+     depends on the other, both only depend on Module 2, which is already complete by this wave.
+   - Wave 4: Module 5 (Presentation — depends on Modules 2, 3, and 4 all being complete).
+   - Wave 5: Module 6 (Scheduling Coordination — depends on Module 5's shortlist/Pass action).
 4. For each wave, dispatch one subagent per module in that wave concurrently.
 5. On each subagent completion: run full quality gates on the whole repo; update `md/progress.md`;
    only advance to the next wave once every module in the current wave is gate-passing.
-6. After Wave 4: run `test.md` §8 end-to-end scenarios as `tests/integration/`.
+6. After Wave 5: run `test.md` §8 end-to-end scenarios as `tests/integration/`.
 7. Write `BUILD_REPORT.md` and stop. Do not attempt to resolve anything in `ASSUMPTIONS.md` —
    those are explicitly reserved for the human owner.
 
@@ -199,12 +205,12 @@ A module is not complete if any of these three fail. Fix the code, not the gate.
 | Wave | Module | Subagent input |
 |---|---|---|
 | 1 | Module 1 — Intake & Extraction | `module-1-intake-extraction.md`, requirement.md FR-1–5/NFR-1/NFR-3, design.md §3.1–3.3, test.md §1 |
-| 1 | Module 7 — Governance & Audit (interface first) | `module-7-governance-audit.md`, requirement.md NFR-2/4/5, design.md §3.11–3.12, test.md §7 |
-| 2 | Module 2 — Scoring Engine | `module-2-scoring-engine.md`, requirement.md FR-6–9/NFR-5/6, design.md §3.4, test.md §2 |
-| 2 | Module 3 — AI-Assisted Content | `module-3-ai-content-generation.md`, requirement.md FR-10/12, design.md §3.5/§1.1, test.md §3 |
-| 3 | Module 4 — Fairness & Compliance | `module-4-fairness-compliance.md`, requirement.md FR-20–23, design.md §3.6, test.md §4 |
-| 3 | Module 5 — Presentation Layer | `module-5-presentation-layer.md`, requirement.md FR-11/13/14, design.md §3.7–3.8, test.md §5 |
-| 4 | Module 6 — Scheduling Coordination | `module-6-scheduling-coordination.md`, requirement.md FR-15–19, design.md §3.9–3.10/§1.1, test.md §6 |
+| 1 | Module 7 — Governance & Audit (interface first) | `module-7-governance-audit.md`, requirement.md NFR-2/4/5/FR-24/28/29, design.md §3.11–3.12, test.md §7 |
+| 2 | Module 2 — Scoring Engine | `module-2-scoring-engine.md`, requirement.md FR-6–9/27/31/NFR-5/6, design.md §3.4, test.md §2 |
+| 3 | Module 3 — AI-Assisted Content | `module-3-ai-content-generation.md`, requirement.md FR-10/12, design.md §3.5/§1.1, test.md §3 |
+| 3 | Module 4 — Fairness & Compliance | `module-4-fairness-compliance.md`, requirement.md FR-20–23/25–27/30, design.md §3.6, test.md §4 |
+| 4 | Module 5 — Presentation Layer | `module-5-presentation-layer.md`, requirement.md FR-11/13/14, design.md §3.7–3.8, test.md §5 |
+| 5 | Module 6 — Scheduling Coordination | `module-6-scheduling-coordination.md`, requirement.md FR-15–19, design.md §3.9–3.10/§1.1, test.md §6 |
 
 ## 9. Critical Architectural Invariants to Verify Before Reporting Done
 
@@ -218,8 +224,12 @@ Beyond passing tests, explicitly verify and record the result of each:
 - [ ] Every module that produces a decision-relevant output calls into `governance_audit`'s logging
       interface — grep for any bespoke `print`/`logging` calls used in place of it and replace them
 - [ ] All confidence/threshold/timeout/retry numbers match the spec exactly (85%, 95%, four-fifths
-      = 0.8, 72h + 48h, 3 rounds / 7 days, 24 months / 30 days) — these must be named constants,
-      not magic numbers, and must match `requirement.md`/`design.md` verbatim
+      = 0.8, 72h + 48h, 3 rounds / 7 days, 24 months / 30 days, tier defaults 80%/60%, all 5 JRP
+      weight-template percentages) — these must be named constants, not magic numbers, and must
+      match `requirement.md`/`design.md` verbatim
+- [ ] No code path exists from `governance_audit`'s stored `Feedback` records into `scoring_engine`
+      — feedback is profile-context-only (FR-28) unless a future change has explicitly passed
+      `fairness_compliance`'s gate (FR-30); verify by the same import/reference check as invariant 1
 
 ## 10. Definition of Done
 

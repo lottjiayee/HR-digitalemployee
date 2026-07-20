@@ -147,7 +147,14 @@ These are constraints the design must satisfy, traced to the SOP/requirement.md:
   to 0–100 → tier classification.
 - Has zero dependency on any LLM output or raw resume free text — only structured fields.
 - JRP configuration (weights, must-have flags, curves) is versioned and audit-logged on every
-  change (FR-6–FR-8).
+  change (FR-6–FR-8). Weight templates ship with the five presets in requirement.md FR-6
+  (General 40/30/15/15, Senior technical 35/35/10/20, Junior/graduate 45/5/30/20, Managerial
+  25/30/15/30, Licensed/compliance 50/20/20/10) as starting points HR can fine-tune per JRP.
+- Tier classification defaults to High Match 80–100%, Mid Match 60–79%, Low Match below 60%
+  (FR-31) — configurable per JRP, but the defaults must ship, not be left undefined.
+- Keyword/skill matching within the weighted calculation is backed by a skill ontology (FR-27) so
+  equivalent phrasings resolve to the same underlying skill — this is a fairness mitigation
+  (design.md §3.6 depends on this existing, not the other way around).
 
 ### 3.5 LLM-Assisted Service
 - Consumes structured extraction output (not raw resume text as instructions) to generate:
@@ -168,6 +175,11 @@ These are constraints the design must satisfy, traced to the SOP/requirement.md:
   collected, separately-stored demographic data).
 - Flags are surfaced to HR/JRP owners for review — this service has no write path back into the
   Scoring Engine or candidate records (FR-20, FR-21).
+- Triggered pre-deployment, at minimum quarterly, **and whenever a JRP's weights or must-have
+  rules change** (FR-20) — not on a fixed calendar alone.
+- Owns the skill-ontology/synonym mapping table consumed by the Scoring Engine (§3.4) as a
+  phrasing/language-bias mitigation (FR-27); this service maintains the ontology, the Scoring
+  Engine only reads it during matching.
 
 ### 3.7 Notification Service
 - Renders and delivers notification cards to Email/Teams, respecting channel format constraints
@@ -202,9 +214,15 @@ These are constraints the design must satisfy, traced to the SOP/requirement.md:
 - Booking calls are idempotent (unique key per booking attempt) to satisfy FR-18.
 
 ### 3.11 Talent Pool Store
-- Holds tagged candidate records for future search, independent of any specific role's pipeline.
+- Holds tagged candidate records for future search, independent of any specific role's pipeline
+  (skill/experience/education/industry tags per FR-24, e.g., `#Python`, `#5YearsExp`, `#MBA`).
 - Subject to retention rules (24-month default deletion/anonymization, 30-day deletion on
   consent withdrawal) — enforced by a scheduled retention job, not manual cleanup.
+- Also holds post-interview candidate feedback (FR-28–FR-30): stored as profile context only, in
+  a `Feedback` record scoped to predefined competency dimensions plus a free-text remark. This
+  store has **no write path into the Scoring Engine (§3.4) or JRP configuration** — feedback data
+  physically cannot reach scoring unless a future, explicitly-approved change routes it through
+  the Fairness Service's adverse-impact gate (§3.6) first, per FR-30.
 
 ### 3.12 Audit & Versioning Log
 - Append-only store. Every write is (actor, timestamp, action, reason, version).
@@ -228,6 +246,7 @@ These are constraints the design must satisfy, traced to the SOP/requirement.md:
 | `Score` | application ref, JRP version, total score, tier, breakdown | Immutable once produced; new engine version -> new Score record, not overwrite |
 | `Summary` / `InterviewQuestions` / `RedFlags` | application ref, generated text, source anchors | LLM-produced, tagged with model/prompt version |
 | `Decision` | application ref, actor, action (Pass/Reject), reason, timestamp | Drives all status transitions |
+| `Feedback` | candidate ref, competency ratings (predefined dimensions, 1–5), free-text remark, actor, timestamp | Profile context only (FR-28); no write path to `JRP` or `Score` |
 | `Interview` | application ref, participants, slots, state (polling/confirmed/escalated) | Owned by Scheduling Coordinator |
 | `ConsentRecord` | candidate ref, consent type (application / talent-pool), timestamp, withdrawal date | Talent-pool consent is separate/unbundled (FR-22) |
 | `AuditEvent` | actor, entity ref, action, reason, timestamp, version | Append-only |

@@ -50,7 +50,10 @@ the system.
 
 - WhatsApp channel timing (requirement.md §7.2) — affects whether this module needs a WhatsApp
   adapter in this phase or a later one.
-- Build vs. buy for parsing (design.md §10.6) — managed document-intelligence API vs. custom NLP.
+- Build vs. buy for parsing (design.md §10.6) — **PDF byte-to-text extraction resolved**: built,
+  using `pypdf` (`intake_extraction/pdf_text.py`; ASSUMPTIONS.md). Still open: whether the
+  structured Skills/Projects/Experience/Education splitting stays a regex heuristic or moves to a
+  managed document-intelligence API/custom NLP model.
 
 ## 7. Progress Checklist
 

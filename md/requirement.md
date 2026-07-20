@@ -38,6 +38,8 @@ captured before go-live and re-measured quarterly.
 - Decision support: suggested interview questions, red-flag detection
 - Talent pool tagging and search
 - Fairness / adverse-impact testing (four-fifths rule) against Hong Kong protected characteristics
+- Post-interview candidate feedback capture, isolated from scoring (see FR-28–FR-30)
+- Candidate-facing explainability and data access/correction on request (see FR-25–FR-26)
 
 ### 3.2 Interview Scheduling Coordination (Workflow B)
 - Calendar Free/Busy sync — **Microsoft 365 / Outlook / Exchange as primary** (Google Calendar as
@@ -53,6 +55,8 @@ captured before go-live and re-measured quarterly.
 - Prompt-injection defense on all resume text before it reaches any LLM component
 - PDPO-aligned candidate notification, explainability, access/correction, retention, and deletion
 - Named operational owner, manual-review queue SLA, incident fallback to human-assisted mode
+- Post-interview feedback is isolated from the scoring pipeline unless explicitly re-approved
+  through the fairness/audit gate in FR-30
 
 ---
 
@@ -80,18 +84,32 @@ captured before go-live and re-measured quarterly.
 
 ### 5.2 Scoring
 - FR-6: HR must be able to define a Job Requirement Profile (JRP) per role, selecting a weight
-  template (General, Senior technical, Junior/graduate, Managerial, Licensed/compliance) and
-  fine-tuning weights (must sum to 100%).
+  template and fine-tuning weights (must sum to 100%). Preset templates (Mandatory Skills /
+  Experience Tenure / Educational Level / Project Relevance):
+
+  | Role type | Mandatory Skills | Experience Tenure | Educational Level | Project Relevance |
+  |---|---|---|---|---|
+  | General (default) | 40% | 30% | 15% | 15% |
+  | Senior technical | 35% | 35% | 10% | 20% |
+  | Junior / graduate | 45% | 5% | 30% | 20% |
+  | Managerial | 25% | 30% | 15% | 30% |
+  | Licensed / compliance | 50% | 20% | 20% | 10% |
+
 - FR-7: Each criterion must be tagged must-have (gating) or weighted (scored).
 - FR-8: Matching curve (Linear/Step/Buffered) must be configurable per dimension per role.
 - FR-9: Scoring must be deterministic; LLM-assisted components (summary, interview questions) must
   never alter a score, tier, or gating outcome.
 - FR-10: Every summary sentence must be traceable to a source passage in the resume (no
   unattributed/hallucinated content).
+- FR-31: Candidates are classified into a tier based on total score, with defaults of **High Match
+  80–100%, Mid Match 60–79%, Low Match below 60%**; thresholds are configurable per JRP but must
+  ship with these defaults, not an empty/undefined range.
 
 ### 5.3 Presentation
-- FR-11: System must produce notification cards (Email/Teams), a comparison table, and a web
-  dashboard with filtering and drill-down.
+- FR-11: System must produce a Candidate Summary Report (total score, tier, a **Matching Analysis**
+  breakdown of which specific requirements were met/missed, and the factual summary), delivered via
+  notification cards (Email/Teams), a comparison table, and a web dashboard with filtering and
+  drill-down.
 - FR-12: System must generate suggested interview questions and red-flag highlights per candidate.
 
 ### 5.4 Decisioning
@@ -111,14 +129,37 @@ captured before go-live and re-measured quarterly.
 - FR-19: All times stored in UTC internally; displayed in each participant's local time zone.
 
 ### 5.6 Fairness & Compliance
-- FR-20: System must run four-fifths adverse-impact testing per JRP, pre-deployment and at minimum
-  quarterly thereafter.
+- FR-20: System must run four-fifths adverse-impact testing per JRP, pre-deployment, at minimum
+  quarterly thereafter, **and whenever a JRP's weights or must-have rules change** (not only on a
+  fixed calendar schedule).
 - FR-21: Demographic data for fairness testing must be voluntary, self-declared, stored separately
   from scoring, and never used as a scoring input.
 - FR-22: Candidates must receive a collection notice (PICS) at intake, with talent-pool consent as a
   separate, unbundled opt-in.
 - FR-23: Non-hired candidate data auto-deletes/anonymizes at 24 months by default; withdrawal of
   consent triggers deletion within 30 days.
+- FR-24: Candidates receive automatic tags derived from extracted skills, experience, education, and
+  industry (e.g., `#Python`, `#5YearsExp`, `#MBA`, `#FinTech`) so HR can search the talent pool for
+  future roles.
+- FR-25: On request, a candidate can be given a human-readable explanation of their evaluation —
+  which dimensions they scored on and the basis for the result — derived from the Matching Analysis
+  (FR-11).
+- FR-26: Candidates may request access to, and correction of, the personal data held about them; the
+  system must support responding to such requests (PDPO data-access and correction right).
+- FR-27: Keyword/skill matching in scoring is backed by a skill ontology so that equivalent
+  phrasings (e.g., synonyms, non-native phrasing of the same competency) map to the same underlying
+  skill, reducing phrasing/language bias as a fairness mitigation.
+
+### 5.7 Candidate Feedback Loop
+- FR-28: HR can record structured post-interview feedback against a candidate's profile. Feedback is
+  stored **solely as profile context** — it must never train, tune, or adjust any scoring model,
+  weight template, or matching curve.
+- FR-29: Feedback is captured against predefined, role-linked competency dimensions (e.g.,
+  communication rated 1–5); free text is accepted only as a supplementary remark, never as a
+  structured field (undefined labels like "cultural fit" are not accepted as structured data).
+- FR-30: If feedback is ever proposed to inform scoring in the future, that change must first pass
+  the adverse-impact testing in FR-20 and be logged under the same audit rules as any other JRP
+  change (NFR-5) before it can be deployed.
 
 ---
 

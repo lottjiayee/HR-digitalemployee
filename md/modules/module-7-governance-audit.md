@@ -16,7 +16,7 @@ policy statements.
 
 | Component | Design ref | Responsibility |
 |---|---|---|
-| Talent Pool Store | §3.11 | Long-term tagged candidate records for future search; retention/anonymization enforcement |
+| Talent Pool Store | §3.11 | Long-term tagged candidate records for future search; retention/anonymization enforcement; also holds post-interview `Feedback` records |
 | Audit & Versioning Log | §3.12 | Append-only log of every decision-relevant action across all modules |
 
 ## 3. Requirements Covered (cross-cutting, referenced by other modules)
@@ -24,7 +24,11 @@ policy statements.
 - **NFR-2**: Manual-review queue SLA (1 business day) — monitoring and breach alerting
 - **NFR-4**: Least-privilege access — credential scoping and usage logging across modules
 - **NFR-5**: Version stamping on every score; one hiring round = one engine/parser version
-- Also underlies FR-14 (decision logging), FR-20 (fairness audit trail), FR-23 (retention)
+- **FR-24**: Automatic talent-pool tagging from extracted skills/experience/education/industry
+- **FR-28**: Post-interview feedback stored solely as profile context — no write path to scoring
+- **FR-29**: Feedback captured against predefined competency dimensions; free text as remark only
+- Also underlies FR-14 (decision logging), FR-20 (fairness audit trail), FR-23 (retention), FR-30
+  (feedback-to-scoring gate — this module stores the feedback, Module 4 owns the gate itself)
 
 ## 4. Key Design Constraints
 
@@ -38,6 +42,12 @@ policy statements.
   operational owner (requirement.md §7.4 — owner still to be named).
 - Named-owner routing: every queue, alert, and escalation across all modules routes to a specific
   person, not a shared mailbox.
+- Feedback records (FR-28–FR-29) are entered against predefined, role-linked competency dimensions
+  (e.g., communication 1–5); free text is accepted only as a supplementary remark — undefined
+  labels (e.g., "cultural fit") are rejected as structured fields, not silently accepted.
+- Feedback has **no consumer other than a human reader** viewing a candidate's profile, unless
+  Module 4's FR-30 gate has explicitly approved a scoring-relevant use — this store does not push
+  data to Module 2 under any automatic condition.
 - Weekly operational review: queue volumes, injection flags (Module 1), scheduling escalations
   (Module 6), incident follow-ups — reviewed by the named owner, feeding the quarterly baseline
   re-measurement.
@@ -60,10 +70,13 @@ policy statements.
 ## 7. Progress Checklist
 
 - [ ] Append-only Audit Log data model (actor, timestamp, action, reason, version)
-- [ ] Audit event emission wired from every other module (1–6)
+- [ ] Audit event emission wired from every other module (1–6) — Module 1 complete (all
+      manual-review routing reasons plus successful processing); Modules 2–6 not built yet
 - [ ] Manual-review queue depth monitoring + SLA breach alerting
 - [ ] Named operational owner assigned and wired into alert routing
-- [ ] Talent Pool tagging store (skills/experience/education/industry tags)
+- [ ] Talent Pool tagging store (skills/experience/education/industry tags, FR-24)
+- [ ] Candidate feedback storage (predefined competency dimensions + remark, FR-28–FR-29)
+- [ ] Feedback isolation enforcement (no code path from Feedback store to Scoring Engine)
 - [ ] 24-month retention auto-delete/anonymize scheduled job
 - [ ] 30-day consent-withdrawal deletion workflow
 - [ ] Layered retention: identifiable-data erasure vs. pseudonymized decision-log retention
