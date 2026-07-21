@@ -12,7 +12,7 @@ Status values used throughout: `Not Started` → `In Progress` → `Blocked` →
 | # | Module | Status | Open items (see §2 — stubbed in code, not blocking) | Module doc |
 |---|---|---|---|---|
 | 1 | Intake & Extraction | In Progress — core pipeline built, rough draft | Real channel integration and structured-field splitting still stubbed (PDF byte-to-text extraction is real via `pypdf`; image OCR is real via local Tesseract, cloud OCR not chosen); malware scan and 200-resume validation not started | [module-1-intake-extraction.md](./modules/module-1-intake-extraction.md) |
-| 2 | Scoring Engine | In Progress — core scoring math built, rough draft | Module 1 -> Module 2 profile adapter not built (Module 1's free-text fields aren't parsed into `CandidateProfile`'s numeric/ordinal fields yet); skill ontology is an exact-match/synonym-map stub pending Module 4; one-round-one-version enforcement and NFR-6 rollback hook not started | [module-2-scoring-engine.md](./modules/module-2-scoring-engine.md) |
+| 2 | Scoring Engine | In Progress — core scoring math + Module 1 adapter built, rough draft | Module 1 -> Module 2 profile adapter is a regex-heuristic stub (word-form numbers, open-ended date ranges not handled); skill ontology is an exact-match/synonym-map stub pending Module 4; one-round-one-version enforcement and NFR-6 rollback hook not started | [module-2-scoring-engine.md](./modules/module-2-scoring-engine.md) |
 | 3 | AI-Assisted Content Generation | Not Started | 2nd LLM provider not chosen (stubbed) | [module-3-ai-content-generation.md](./modules/module-3-ai-content-generation.md) |
 | 4 | Fairness & Compliance | Not Started | — | [module-4-fairness-compliance.md](./modules/module-4-fairness-compliance.md) |
 | 5 | Presentation Layer | Not Started | — | [module-5-presentation-layer.md](./modules/module-5-presentation-layer.md) |
@@ -27,15 +27,17 @@ manual-review routing reason, not just suspected injection, and optionally appen
 successfully-extracted submission's raw text to a persistent `TextExtractionLog`), Module 2's
 scoring math (must-have gating, Linear/Step/Buffered curves, weighted dimension scoring + tier
 classification, JRP data model + weight-template presets + audit-logged versioning, a skill-ontology
-consumption point), and Module 7's `AuditEvent`/`AuditLog` interface with both an in-memory and a
-SQLite-backed implementation (the latter survives a process restart; still a temporary/local-only
-bridge, not the real deployment data store — see ASSUMPTIONS.md). 100 tests, mypy --strict / ruff /
-ruff format all pass (OCR tests skip gracefully on a machine
-without the Tesseract binary). See `ASSUMPTIONS.md` at the repo root for every stub this draft
-makes — including an observed, non-theoretical accuracy tradeoff for local OCR vs. a managed cloud
-provider, and the Module 1 -> Module 2 profile adapter that still needs building before Module 2 can
-run on real extracted resumes rather than hand-built `CandidateProfile` test fixtures. Modules 3–6
-are empty placeholder packages only.
+consumption point), a regex-heuristic Module 1 -> Module 2 profile adapter connecting the two
+(`scoring_engine/profile_adapter.py`), and Module 7's `AuditEvent`/`AuditLog` interface with both an
+in-memory and a SQLite-backed implementation (the latter survives a process restart; still a
+temporary/local-only bridge, not the real deployment data store — see ASSUMPTIONS.md). Modules 1
+and 2 are now connected end to end: `tests/integration/test_intake_to_scoring_pipeline.py` runs a
+real resume through `IngestionGateway.run_once()` and into `ScoringEngine.score()` and checks a real
+`Score` comes out, not just hand-built `CandidateProfile` fixtures. 121 tests, mypy --strict / ruff
+/ ruff format all pass (OCR tests skip gracefully on a machine without the Tesseract binary). See
+`ASSUMPTIONS.md` at the repo root for every stub this draft makes — including an observed,
+non-theoretical accuracy tradeoff for local OCR vs. a managed cloud provider. Modules 3–6 are empty
+placeholder packages only.
 
 **2026-07-21 code-review pass:** found and fixed two gateway-level correctness bugs (not stubs —
 actual defects) via a Standards/Spec code review against design.md/FR-3: (1) a resume whose Skills
@@ -129,8 +131,10 @@ named person to exist), but the system should not go live until they're resolved
 - [x] Scoring-engine version stamping — every `Score` carries both `scoring_engine_version` and `parser_version` (NFR-5), plus an audit-logged warning (not a hard block) if a JRP's Educational Level weight exceeds the 15% guideline default (module-2 doc §4)
 - [ ] One-round-one-version enforcement — not started, needs a hiring-round/Application entity
 - [ ] Rollback trigger hook — not started, needs a live metrics feed (NFR-6)
-- [ ] Module 1 -> Module 2 profile adapter — `ScoringEngine` takes its own `CandidateProfile`, not
-      Module 1's `ExtractedResume` directly; mapping one to the other is still open (see ASSUMPTIONS.md)
+- [x] Module 1 -> Module 2 profile adapter — `profile_adapter.build_candidate_profile()` maps
+      `ExtractedResume` -> `CandidateProfile` via regex heuristics (year-phrase/year-range parsing,
+      a degree-keyword table); `tests/integration/test_intake_to_scoring_pipeline.py` proves a real
+      resume flows from `IngestionGateway.run_once()` through to a `Score` end to end
 
 ## 5. Module 3 — AI-Assisted Content Generation
 

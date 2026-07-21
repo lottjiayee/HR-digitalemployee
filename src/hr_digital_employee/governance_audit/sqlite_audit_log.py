@@ -7,7 +7,7 @@ See ASSUMPTIONS.md.
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from hr_digital_employee.governance_audit.models import AuditEvent
@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS audit_events (
 )
 """
 
+_CREATE_ENTITY_REF_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_audit_events_entity_ref ON audit_events(entity_ref)
+"""
+
 _SELECT_COLUMNS = "actor, entity_ref, action, reason, timestamp, version"
 
 
@@ -37,6 +41,7 @@ class SqliteAuditLog:
     def __init__(self, path: Path | str = ":memory:") -> None:
         self._connection = sqlite3.connect(str(path))
         self._connection.execute(_CREATE_TABLE)
+        self._connection.execute(_CREATE_ENTITY_REF_INDEX)
         self._connection.commit()
 
     def record(self, event: AuditEvent) -> None:
@@ -77,6 +82,10 @@ def _row_to_event(row: tuple[str, str, str, str, str, str]) -> AuditEvent:
         entity_ref=entity_ref,
         action=action,
         reason=reason,
-        timestamp=datetime.fromisoformat(timestamp).astimezone(UTC),
+        # `isoformat()` -> `fromisoformat()` is a lossless round trip on its own, for both naive
+        # and timezone-aware datetimes -- do NOT follow it with `.astimezone(UTC)`, which would
+        # reinterpret a naive datetime using the *local system's* timezone and silently shift its
+        # wall-clock value rather than just relabeling it.
+        timestamp=datetime.fromisoformat(timestamp),
         version=version,
     )

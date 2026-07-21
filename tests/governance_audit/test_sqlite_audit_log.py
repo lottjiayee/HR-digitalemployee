@@ -62,3 +62,30 @@ def test_events_are_returned_in_the_order_they_were_recorded() -> None:
     events = log.events_for("cand-1")
 
     assert [e.action for e in events] == ["first_action", "second_action"]
+
+
+def test_timestamp_round_trips_exactly_for_a_timezone_aware_datetime() -> None:
+    log = SqliteAuditLog()
+    original = _event("cand-1", "resume_processed")
+
+    log.record(original)
+
+    assert log.all_events()[0].timestamp == original.timestamp
+
+
+def test_timestamp_round_trips_without_shifting_a_naive_datetime() -> None:
+    # Regression test: a naive datetime must come back with the identical wall-clock value, not
+    # silently reinterpreted through the local system timezone.
+    log = SqliteAuditLog()
+    naive_event = AuditEvent(
+        actor="test",
+        entity_ref="cand-1",
+        action="resume_processed",
+        reason="unit test",
+        timestamp=datetime(2026, 7, 21, 12, 0, 0),  # deliberately naive, no tzinfo
+        version="1.0",
+    )
+
+    log.record(naive_event)
+
+    assert log.all_events()[0].timestamp == naive_event.timestamp

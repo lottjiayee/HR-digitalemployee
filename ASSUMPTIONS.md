@@ -161,6 +161,15 @@ decision logs retained separately for their own period), on whatever cloud data 
 it's a temporary bridge so the audit trail survives a restart *now*, not a stand-in for the real
 durable/region-aware store design.md §4.2 describes. `InMemoryAuditLog` remains available where
 even a local file isn't wanted (e.g. fully ephemeral unit tests).
+**Fixed 2026-07-21:** `_row_to_event()` originally re-parsed the stored timestamp with
+`datetime.fromisoformat(...).astimezone(UTC)`. `isoformat()`/`fromisoformat()` alone is already a
+lossless round trip for both naive and timezone-aware datetimes; the extra `.astimezone(UTC)` call
+reinterpreted a *naive* datetime using the local system's timezone, silently shifting its
+wall-clock value rather than just relabeling it (no caller passes a naive datetime today --
+`datetime.now(UTC)` is used everywhere -- so this was latent, not yet triggered). Removed the
+`.astimezone(UTC)` call; see
+`tests/governance_audit/test_sqlite_audit_log.py::test_timestamp_round_trips_without_shifting_a_naive_datetime`.
+Also added a missing index on `entity_ref`, the column `events_for()` filters by.
 
 ## Manual-review queue persistence
 
@@ -213,23 +222,37 @@ merge into one type with a `must_have: bool` flag — a resettable decision, not
 
 ## Scoring Engine: `CandidateProfile` vs. Module 1's `ExtractedResume`
 
-**Status:** Stubbed — the Module 1 -> Module 2 adapter is the open gap, not the scoring math
+**Status:** Resolved on the heuristic side — the Module 1 -> Module 2 adapter is built, using the
+same kind of regex heuristics as Module 1's own extraction, not a real parsing/NLP engine
 **What was built:** `ScoringEngine.score()` (`scoring_engine/engine.py`) takes a `CandidateProfile`
 — typed, already-resolved fields (`skills: tuple[str, ...]`, `years_of_experience: float`,
 `education_level: EducationLevel`, `project_count: int`) — rather than Module 1's `ExtractedResume`
-directly.
-**Why this default:** Module 1's `experience`/`education` fields are free-text strings (e.g.
-"5 years at TechCorp"), not a number or an ordinal degree level — turning that into
-`years_of_experience=5.0` or `education_level=EducationLevel.BACHELOR` needs real parsing/NLP that
-Module 1's current regex-heuristic extractor doesn't attempt (see "Structured extraction" above).
-Rather than bolt a second heuristic guess onto scoring — where FR-9's determinism guarantee matters
-most — the engine's input contract stays a clean, already-resolved type. This keeps the scoring
-math itself (gating, curves, weighting, tiers) real and fully tested independent of extraction
-quality, matching design.md §3.4's description of the Scoring Engine as a "pure, deterministic
-component."
-**What a real implementation must satisfy:** a `ExtractedResume -> CandidateProfile` mapping step
-(numeric year extraction, degree-string ranking, skill-list passthrough) — not yet built, and not
-this module's concern per the design's component boundary.
+directly. `scoring_engine/profile_adapter.py`'s `build_candidate_profile()` now maps one to the
+other: `years_of_experience` from the largest explicit "N years" mention (not just the first, so
+"8 years total, including 3 years as lead" credits 8, not 3), falling back to the *sum* of each year
+range's own length (not the overall min-to-max span, which would wrongly count a career-break gap
+between two ranges as experience) if no such phrase is found; `education_level` from a fixed
+keyword table (PhD/doctorate -> DOCTORATE, master/MSc/MBA -> MASTER, bachelor/BSc/BBA/BS/BA ->
+BACHELOR, "associate's degree" -> ASSOCIATE, "high school"/"secondary school" -> HIGH_SCHOOL,
+checked highest-degree-first so a resume listing several degrees credits the highest); `skills` and
+`project_count` pass through Module 1's lists directly. Missing/`UNVERIFIED` fields degrade to
+`0.0`/`EducationLevel.NONE`/`()`, never an exception.
+**What a real implementation must satisfy:** the same mapping, backed by real parsing/NLP instead
+of regex heuristics, once Module 1's own extraction (see "Structured extraction" above) is upgraded
+past its own regex-heuristic stage — this adapter's accuracy is capped by whatever Module 1
+actually extracts, not just its own heuristics.
+**Why this default:** reuses the extraction module's own "heuristic stub, honestly scoped and
+documented" pattern rather than inventing a different convention for the boundary between the two
+modules. Known gaps, left deliberately unhandled: word-form numbers ("five years" won't match, only
+"5 years"); open-ended ranges ("2019-Present"); overlapping ranges double-count their overlap (the
+sum-of-lengths fix targets the more common non-overlapping-gap case, not this rarer one); bare "MS"/
+"MA" are deliberately excluded from the keyword table despite "MSc"/"MBA" being included, because an
+unqualified 2-letter/-abbreviation match risks colliding with the "Ms." honorific and similar
+false positives that "MSc" doesn't; anything else not covered by the keyword table (e.g. a diploma
+name that doesn't contain "bachelor"/"BSc"/etc.) resolves to `EducationLevel.NONE`, crediting
+nothing rather than guessing. `tests/integration/test_intake_to_scoring_pipeline.py` proves a real
+resume can flow from `IngestionGateway.run_once()` through this adapter into `ScoringEngine.score()`
+end to end, not just via hand-built `CandidateProfile` fixtures.
 
 ## Scoring Engine: Educational Level ratio is an ordinal comparison
 

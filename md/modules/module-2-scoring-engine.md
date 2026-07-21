@@ -81,7 +81,8 @@ HR can fine-tune any of these per JRP; the system validates the result still sum
 - [x] Scoring-engine version stamping on every Score record (both `scoring_engine_version` and `parser_version`, per NFR-5) — plus an audit-logged (non-blocking) warning when a JRP's Educational Level weight exceeds the 15% guideline default
 - [ ] One-round-one-version enforcement (block mixed-version scoring within a hiring round)
 - [ ] Rollback trigger hook (flips to human-assisted mode on metric breach)
-- [ ] Module 1 -> Module 2 profile adapter (`ExtractedResume` -> `CandidateProfile`; see ASSUMPTIONS.md)
+- [x] Module 1 -> Module 2 profile adapter (`ExtractedResume` -> `CandidateProfile`; regex-heuristic
+      stub, same spirit as Module 1's own extraction heuristics — see ASSUMPTIONS.md)
 
 ## 8. Testing
 
