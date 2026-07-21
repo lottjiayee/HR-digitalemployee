@@ -25,11 +25,21 @@ text extraction via `pypdf`, local image OCR via Tesseract, injection screening,
 extraction, dedup, manual review queue, gateway orchestrator — the gateway now audit-logs every
 manual-review routing reason, not just suspected injection, and optionally appends every
 successfully-extracted submission's raw text to a persistent `TextExtractionLog`) and Module 7's
-`AuditEvent`/`AuditLog` interface + in-memory implementation. 54 tests, mypy --strict / ruff / ruff
+`AuditEvent`/`AuditLog` interface + in-memory implementation. 57 tests, mypy --strict / ruff / ruff
 format all pass (OCR
 tests skip gracefully on a machine without the Tesseract binary). See `ASSUMPTIONS.md` at the repo
 root for every stub this draft makes — including an observed, non-theoretical accuracy tradeoff for
 local OCR vs. a managed cloud provider. Modules 2–6 are empty placeholder packages only.
+
+**2026-07-21 code-review pass:** found and fixed two gateway-level correctness bugs (not stubs —
+actual defects) via a Standards/Spec code review against design.md/FR-3: (1) a resume whose Skills
+or Experience section was missing entirely (`UNVERIFIED`, not just low-confidence) was silently
+processed instead of routed to manual review; (2) `LocalFolderChannelAdapter` re-returned every
+file on every call instead of only new ones since the last fetch, so a real polling loop would
+reprocess the same resumes forever. Also: untrusted raw text is now logged to `TextExtractionLog`
+only after injection screening (previously logged before), and a handful of smaller Standards-axis
+smells (duplicated identity-fallback logic, a query function with a hidden global side effect,
+a magic version string) were cleaned up. See `ASSUMPTIONS.md` for the per-fix writeups.
 
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
