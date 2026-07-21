@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from image_fixtures import CORRUPTED_PNG_BYTES, build_image_with_text
+from image_fixtures import CORRUPTED_PNG_BYTES, build_image_with_text, build_sidebar_resume_image
 
 from hr_digital_employee.intake_extraction import ocr
 
@@ -42,3 +42,15 @@ def test_real_image_text_is_ocrd() -> None:
 @requires_tesseract
 def test_corrupted_image_bytes_are_unparseable() -> None:
     assert ocr.extract_text(CORRUPTED_PNG_BYTES) is None
+
+
+@requires_tesseract
+def test_sidebar_layout_with_icons_still_returns_text_without_crashing() -> None:
+    # Regression fixture for the icon/sidebar/multi-column shape that a real-world resume image
+    # was observed to OCR noticeably worse than a clean single-column layout (see ASSUMPTIONS.md).
+    # This deliberately does NOT assert exact wording -- Tesseract's output on this kind of layout
+    # is version-dependent and known to be imperfect. It only guards against the dispatch path
+    # crashing or silently regressing to None on a layout this shape.
+    text = ocr.extract_text(build_sidebar_resume_image())
+
+    assert text is not None

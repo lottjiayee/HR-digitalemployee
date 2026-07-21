@@ -119,6 +119,37 @@ def test_t1_1b_valid_real_pdf_is_processed_end_to_end() -> None:
     assert extracted.skills.value == ["Python, SQL"]
 
 
+def test_real_world_functional_resume_pdf_is_processed_end_to_end() -> None:
+    # Regression fixture: anonymized structure of a real "functional resume" template PDF used
+    # during manual testing, run through a real PDF byte stream (not just a plain-text stand-in)
+    # so pdf_text.py's pypdf-based text-layer extraction is exercised too. It uses "Employment
+    # History" rather than the literal word "Experience" for its most job-history-like heading.
+    pdf_bytes = build_pdf_with_text(
+        [
+            "Career Summary",
+            "Four years experience in early childhood development.",
+            "Adult Care Experience",
+            "- Determined work placement for 150 special needs adult clients.",
+            "Childcare Experience",
+            "- Coordinated service assignments for 20 part-time counselors.",
+            "Employment History",
+            "1999-2002 Counseling Supervisor, The Wesley Center, Little Rock, Arkansas.",
+            "Education",
+            "Example University, Little Rock, AR",
+            "- BS in Early Childhood Development (1999)",
+        ]
+    )
+    gateway, queue, _audit = _build_gateway(
+        [_submission(pdf_bytes, email="g@example.com", name="Functional Resume")]
+    )
+    results = gateway.run_once()
+
+    assert len(results) == 1
+    _candidate, extracted = results[0]
+    assert "Counseling Supervisor" in extracted.experience.value
+    assert "Employment History" in extracted.experience.value
+
+
 @pytest.mark.skipif(
     not ocr.tesseract_available(),
     reason="Tesseract binary not found on this machine -- see ASSUMPTIONS.md",
