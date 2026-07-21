@@ -69,9 +69,13 @@ policy statements.
 
 ## 7. Progress Checklist
 
-- [ ] Append-only Audit Log data model (actor, timestamp, action, reason, version)
+- [x] Append-only Audit Log data model (actor, timestamp, action, reason, version) — `AuditEvent` +
+      `AuditLog` protocol, with an in-memory and a SQLite-backed implementation (the latter
+      survives a process restart; still a temporary/local-only bridge, not the real deployment
+      data store — see ASSUMPTIONS.md)
 - [ ] Audit event emission wired from every other module (1–6) — Module 1 complete (all
-      manual-review routing reasons plus successful processing); Modules 2–6 not built yet
+      manual-review routing reasons plus successful processing); Module 2 logs JRP saves and
+      weight-guideline warnings, but not yet individual Score production; Modules 3–6 not built yet
 - [ ] Manual-review queue depth monitoring + SLA breach alerting
 - [ ] Named operational owner assigned and wired into alert routing
 - [ ] Talent Pool tagging store (skills/experience/education/industry tags, FR-24)

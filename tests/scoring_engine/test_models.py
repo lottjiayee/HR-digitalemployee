@@ -1,0 +1,170 @@
+"""Tests for scoring_engine domain models: JRP weight validation (test.md T2.1-T2.2) and tier
+classification (test.md T2.13)."""
+
+from __future__ import annotations
+
+import pytest
+
+from hr_digital_employee.scoring_engine.models import (
+    JRP,
+    CandidateProfile,
+    Dimension,
+    EducationLevel,
+    MatchingCurve,
+    MustHaveCriterion,
+    MustHaveKind,
+    Tier,
+    TierThresholds,
+    WeightedCriterion,
+    WeightTemplate,
+    weight_guideline_warnings,
+)
+
+
+def _criterion(dimension: Dimension, weight: float) -> WeightedCriterion:
+    if dimension is Dimension.MANDATORY_SKILLS:
+        return WeightedCriterion(
+            dimension=dimension, weight=weight, curve=MatchingCurve.LINEAR,
+            required_skills=("Python",),
+        )
+    if dimension is Dimension.EXPERIENCE_TENURE:
+        return WeightedCriterion(
+            dimension=dimension, weight=weight, curve=MatchingCurve.LINEAR, required_years=5.0,
+        )
+    if dimension is Dimension.EDUCATIONAL_LEVEL:
+        return WeightedCriterion(
+            dimension=dimension, weight=weight, curve=MatchingCurve.LINEAR,
+            required_education_level=EducationLevel.BACHELOR,
+        )
+    return WeightedCriterion(
+        dimension=dimension, weight=weight, curve=MatchingCurve.LINEAR, required_project_count=2,
+    )
+
+
+def test_t2_1_jrp_rejects_weights_that_do_not_sum_to_100() -> None:
+    with pytest.raises(ValueError, match="must sum to 100"):
+        JRP(
+            jrp_id="role-1",
+            role_name="Senior Engineer",
+            version=1,
+            weight_template=WeightTemplate.SENIOR_TECHNICAL,
+            weighted_criteria=(
+                _criterion(Dimension.MANDATORY_SKILLS, 35.0),
+                _criterion(Dimension.EXPERIENCE_TENURE, 35.0),
+                _criterion(Dimension.EDUCATIONAL_LEVEL, 10.0),
+                _criterion(Dimension.PROJECT_RELEVANCE, 19.0),  # sums to 99, not 100
+            ),
+        )
+
+
+def test_t2_2_jrp_accepts_weights_summing_to_exactly_100() -> None:
+    jrp = JRP(
+        jrp_id="role-1",
+        role_name="Senior Engineer",
+        version=1,
+        weight_template=WeightTemplate.SENIOR_TECHNICAL,
+        weighted_criteria=(
+            _criterion(Dimension.MANDATORY_SKILLS, 35.0),
+            _criterion(Dimension.EXPERIENCE_TENURE, 35.0),
+            _criterion(Dimension.EDUCATIONAL_LEVEL, 10.0),
+            _criterion(Dimension.PROJECT_RELEVANCE, 20.0),
+        ),
+    )
+    assert sum(c.weight for c in jrp.weighted_criteria) == 100.0
+
+
+def test_jrp_rejects_a_dimension_appearing_more_than_once() -> None:
+    with pytest.raises(ValueError, match="at most once"):
+        JRP(
+            jrp_id="role-1",
+            role_name="Senior Engineer",
+            version=1,
+            weight_template=WeightTemplate.GENERAL,
+            weighted_criteria=(
+                _criterion(Dimension.MANDATORY_SKILLS, 50.0),
+                _criterion(Dimension.MANDATORY_SKILLS, 50.0),
+            ),
+        )
+
+
+def test_must_have_required_skill_criterion_needs_a_skill_set() -> None:
+    with pytest.raises(ValueError, match="required_skill"):
+        MustHaveCriterion(kind=MustHaveKind.REQUIRED_SKILL, label="Must know Python")
+
+
+def test_must_have_minimum_years_criterion_needs_minimum_years_set() -> None:
+    with pytest.raises(ValueError, match="minimum_years"):
+        MustHaveCriterion(kind=MustHaveKind.MINIMUM_YEARS_EXPERIENCE, label="Must have 2+ years")
+
+
+@pytest.mark.parametrize(
+    ("total_score", "expected_tier"),
+    [
+        (79.0, Tier.MID_MATCH),
+        (80.0, Tier.HIGH_MATCH),
+        (59.0, Tier.LOW_MATCH),
+        (60.0, Tier.MID_MATCH),
+    ],
+)
+def test_t2_13_default_tier_thresholds_land_on_the_correct_side_of_the_boundary(
+    total_score: float, expected_tier: Tier
+) -> None:
+    assert TierThresholds().classify(total_score) is expected_tier
+
+
+def test_tier_thresholds_reject_an_inverted_range() -> None:
+    with pytest.raises(ValueError, match="thresholds"):
+        TierThresholds(high_match_min=50.0, mid_match_min=60.0)
+
+
+def test_candidate_profile_rejects_negative_years_of_experience() -> None:
+    with pytest.raises(ValueError, match="years_of_experience"):
+        CandidateProfile(
+            skills=(), years_of_experience=-1.0, education_level=EducationLevel.NONE,
+            project_count=0,
+        )
+
+
+def test_candidate_profile_rejects_negative_project_count() -> None:
+    with pytest.raises(ValueError, match="project_count"):
+        CandidateProfile(
+            skills=(), years_of_experience=0.0, education_level=EducationLevel.NONE,
+            project_count=-1,
+        )
+
+
+def test_weight_guideline_warnings_flags_educational_level_over_the_default() -> None:
+    jrp = JRP(
+        jrp_id="role-1",
+        role_name="Graduate Analyst",
+        version=1,
+        weight_template=WeightTemplate.JUNIOR_GRADUATE,
+        weighted_criteria=(
+            _criterion(Dimension.MANDATORY_SKILLS, 45.0),
+            _criterion(Dimension.EXPERIENCE_TENURE, 5.0),
+            _criterion(Dimension.EDUCATIONAL_LEVEL, 30.0),  # over the 15% guideline default
+            _criterion(Dimension.PROJECT_RELEVANCE, 20.0),
+        ),
+    )
+
+    warnings = weight_guideline_warnings(jrp)
+
+    assert len(warnings) == 1
+    assert "30.0%" in warnings[0]
+
+
+def test_weight_guideline_warnings_empty_when_within_the_default() -> None:
+    jrp = JRP(
+        jrp_id="role-1",
+        role_name="Senior Engineer",
+        version=1,
+        weight_template=WeightTemplate.SENIOR_TECHNICAL,
+        weighted_criteria=(
+            _criterion(Dimension.MANDATORY_SKILLS, 35.0),
+            _criterion(Dimension.EXPERIENCE_TENURE, 35.0),
+            _criterion(Dimension.EDUCATIONAL_LEVEL, 10.0),
+            _criterion(Dimension.PROJECT_RELEVANCE, 20.0),
+        ),
+    )
+
+    assert weight_guideline_warnings(jrp) == ()

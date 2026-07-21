@@ -1,6 +1,6 @@
 # Module 2: Scoring Engine
 
-**Status:** Not Started
+**Status:** In Progress — core scoring math built, rough draft (see md/progress.md)
 **Design source:** [design.md](../design.md) §3.4
 **Requirement source:** [requirement.md](../requirement.md) FR-6–FR-9, NFR-5, NFR-6
 
@@ -69,17 +69,19 @@ HR can fine-tune any of these per JRP; the system validates the result still sum
 
 ## 7. Progress Checklist
 
-- [ ] JRP data model (weights, must-have flags, curves, versioning)
-- [ ] Weight template presets (5 role types, exact percentages above) + validation (sum to 100%)
-- [ ] Must-have gating check (disqualify path, no weighted calc on fail)
-- [ ] Matching curve implementations: Linear, Step, Buffered
-- [ ] Skill-ontology-backed matching (consumes Module 4's ontology table)
-- [ ] Weighted score calculation + normalization to 0–100
-- [ ] Tier classification with 80%/60% default thresholds (configurable per JRP)
-- [ ] JRP change audit logging (who/when/why)
-- [ ] Scoring-engine version stamping on every Score record
+- [x] JRP data model (weights, must-have flags, curves, versioning)
+- [x] Weight template presets (5 role types, exact percentages above) + validation (sum to 100%)
+- [x] Must-have gating check (disqualify path, no weighted calc on fail)
+- [x] Matching curve implementations: Linear, Step, Buffered
+- [x] Skill-ontology-backed matching (consumption point built; real ontology is Module 4's, not
+      built yet — see ASSUMPTIONS.md)
+- [x] Weighted score calculation + normalization to 0–100
+- [x] Tier classification with 80%/60% default thresholds (configurable per JRP)
+- [x] JRP change audit logging (who/when/why)
+- [x] Scoring-engine version stamping on every Score record (both `scoring_engine_version` and `parser_version`, per NFR-5) — plus an audit-logged (non-blocking) warning when a JRP's Educational Level weight exceeds the 15% guideline default
 - [ ] One-round-one-version enforcement (block mixed-version scoring within a hiring round)
 - [ ] Rollback trigger hook (flips to human-assisted mode on metric breach)
+- [ ] Module 1 -> Module 2 profile adapter (`ExtractedResume` -> `CandidateProfile`; see ASSUMPTIONS.md)
 
 ## 8. Testing
 

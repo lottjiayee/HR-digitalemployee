@@ -146,15 +146,21 @@ choice is made deliberately.
 
 ## Audit log persistence
 
-**Status:** Stubbed — pending human decision (data residency, `md/progress.md` §2a)
-**What was built:** `InMemoryAuditLog` (`governance_audit/audit_log.py`) implementing the
-`AuditLog` protocol — events live in a Python list, lost on process exit.
+**Status:** Resolved on the lightweight/local side only — the real deployment data store remains
+pending human decision (data residency, `md/progress.md` §2a)
+**What was built:** two `AuditLog`-protocol implementations now exist: `InMemoryAuditLog`
+(`governance_audit/audit_log.py`, events live in a Python list, lost on process exit) and
+`SqliteAuditLog` (`governance_audit/sqlite_audit_log.py`, events persist to a local SQLite file —
+or `:memory:` for tests — and survive a process restart). Callers pick either by constructor call;
+nothing else about the protocol changes.
 **What a real implementation must satisfy:** durable, append-only storage, retained independently
 of application data per SOP 4.3's layered retention (identifiable data erasable; pseudonymized
-decision logs retained separately for their own period).
-**Why this default:** lets every other module (Module 1's gateway, and eventually all others) log
-through the real `AuditLog` protocol now, without picking a database or region ahead of that
-decision being made.
+decision logs retained separately for their own period), on whatever cloud data store `design.md`
+§10.1 eventually settles on.
+**Why this default:** `SqliteAuditLog` needs no vendor account, network call, or region decision —
+it's a temporary bridge so the audit trail survives a restart *now*, not a stand-in for the real
+durable/region-aware store design.md §4.2 describes. `InMemoryAuditLog` remains available where
+even a local file isn't wanted (e.g. fully ephemeral unit tests).
 
 ## Manual-review queue persistence
 
@@ -184,10 +190,100 @@ produced for a real submission without re-running the pipeline by hand each time
 kept as a plain file rather than reusing `AuditLog`'s `AuditEvent`, since `AuditEvent` has no
 free-text payload field and is meant for decision-relevant events, not raw content dumps.
 
+## Scoring Engine: must-have vs. weighted criteria are two separate lists
+
+**Status:** Interpretation call — the spec is genuinely ambiguous here
+**What was built:** `JRP` (`scoring_engine/models.py`) holds `must_have_criteria` (pure pass/fail
+gates — a required skill or a minimum-years floor) and `weighted_criteria` (one entry per scored
+dimension: Mandatory Skills / Experience Tenure / Educational Level / Project Relevance, each with
+a weight, a matching curve, and the requirement value that curve measures against) as two
+independent lists, not one list where any of the four named dimensions can itself be tagged
+must-have.
+**Why this reading:** FR-6's weight table gives "Mandatory Skills" a normal percentage weight
+(40% under the General template), which only makes sense if that whole dimension is expected to
+be *scored*, not gated. Module-2 doc §4's own guidance ("trainable skills should not be must-have")
+also reads more naturally as being about specific requirements (a license, a language, a minimum
+tenure) than about gating an entire weighted dimension wholesale. GLOSSARY.md's "a JRP criterion is
+either must-have or weighted" is compatible with either reading; this draft picked the one that
+keeps FR-6's weight table meaningful. If the intended reading is "any of the four dimensions can be
+marked must-have instead of weighted," `WeightedCriterion` and `MustHaveCriterion` would need to
+merge into one type with a `must_have: bool` flag — a resettable decision, not a one-way door.
+**What a real implementation must satisfy:** FR-7 (must-have vs. weighted tagging), module-2 doc §4
+("no score is computed" for a JRP that gates a candidate out).
+
+## Scoring Engine: `CandidateProfile` vs. Module 1's `ExtractedResume`
+
+**Status:** Stubbed — the Module 1 -> Module 2 adapter is the open gap, not the scoring math
+**What was built:** `ScoringEngine.score()` (`scoring_engine/engine.py`) takes a `CandidateProfile`
+— typed, already-resolved fields (`skills: tuple[str, ...]`, `years_of_experience: float`,
+`education_level: EducationLevel`, `project_count: int`) — rather than Module 1's `ExtractedResume`
+directly.
+**Why this default:** Module 1's `experience`/`education` fields are free-text strings (e.g.
+"5 years at TechCorp"), not a number or an ordinal degree level — turning that into
+`years_of_experience=5.0` or `education_level=EducationLevel.BACHELOR` needs real parsing/NLP that
+Module 1's current regex-heuristic extractor doesn't attempt (see "Structured extraction" above).
+Rather than bolt a second heuristic guess onto scoring — where FR-9's determinism guarantee matters
+most — the engine's input contract stays a clean, already-resolved type. This keeps the scoring
+math itself (gating, curves, weighting, tiers) real and fully tested independent of extraction
+quality, matching design.md §3.4's description of the Scoring Engine as a "pure, deterministic
+component."
+**What a real implementation must satisfy:** a `ExtractedResume -> CandidateProfile` mapping step
+(numeric year extraction, degree-string ranking, skill-list passthrough) — not yet built, and not
+this module's concern per the design's component boundary.
+
+## Scoring Engine: Educational Level ratio is an ordinal comparison
+
+**Status:** Interpretation call
+**What was built:** `EducationLevel` (`scoring_engine/models.py`) is an ordinal `IntEnum`
+(NONE < HIGH_SCHOOL < ASSOCIATE < BACHELOR < MASTER < DOCTORATE). `_ratio_for()`
+(`scoring_engine/engine.py`) computes the Educational Level dimension's raw ratio as
+`candidate_level / required_level` (e.g. BACHELOR/MASTER = 0.75), then feeds that ratio through the
+JRP's configured curve exactly like the other three dimensions.
+**Why this reading:** GLOSSARY.md's three matching-curve examples are all framed around a natural
+numeric requirement ("5 years of experience"); it says nothing about how a degree-level requirement
+should turn into a ratio. Treating the ordinal rank as a numerator/denominator pair reuses the same
+curve math as every other dimension rather than inventing a fifth, degree-specific rule, and
+produces sensible results (a Bachelor's candidate against a Master's requirement scores 75% before
+the curve, not 0% or 100%). This is a judgement call, not a spec requirement — a different, equally
+defensible reading (e.g. "meets or doesn't meet" as a step function regardless of the JRP's curve
+setting) is possible.
+**What a real implementation must satisfy:** FR-8 (curve configurable per dimension) — satisfied
+either way; this note exists so the choice is visible rather than an implicit accident.
+
+## Scoring Engine: skill ontology (FR-27)
+
+**Status:** Stubbed — Module 4 owns the real ontology (design.md §3.6)
+**What was built:** `SkillOntology` protocol (`scoring_engine/skill_ontology.py`) plus two
+placeholder implementations: `IdentitySkillOntology` (exact match only, the `ScoringEngine`
+default) and `SynonymMapSkillOntology` (an explicit synonym-group list, e.g. `[("led a team", "team
+leadership")]`).
+**What a real implementation must satisfy:** Module 4's maintained ontology/synonym table (FR-27),
+consumed read-only by the Scoring Engine, never the other way around (design.md §3.6).
+**Why this default:** lets `ScoringEngine` be built and tested against a real interface now without
+waiting on Module 4; swapping in Module 4's real ontology later is a constructor-argument change,
+not a Scoring Engine rewrite.
+
+## Scoring Engine: one-round-one-version enforcement and the NFR-6 rollback hook
+
+**Status:** Flagged rather than stubbed — like malware scanning, these need infrastructure this
+draft doesn't have yet, not just Python logic
+**What was built:** nothing — `Score` records do carry `scoring_engine_version` (NFR-5), but
+nothing yet blocks scoring some candidates in an active hiring round on one engine version and
+others on a different one, and nothing monitors live metrics to trigger NFR-6's automatic
+rollback to human-assisted mode.
+**Why flagged rather than stubbed:** both need a concept this codebase doesn't have yet (a
+hiring-round/Application entity to enforce "one version" against, a live metrics feed to watch for
+NFR-6) — not meaningfully fakeable as pure scoring logic. Left as an explicit gap for the next
+build pass.
+
 ## What this draft does NOT cover yet
 
-This is a rough first draft of Wave 1 only (Module 1: Intake & Extraction, and the minimum of
-Module 7: Governance & Audit needed for Module 1 to log through it). **Not yet built:** manual-
-review SLA monitoring/alerting, incident routing, weekly operational review, Talent Pool Store,
-Candidate Feedback storage, and Modules 2 through 6 entirely (empty placeholder packages only, per
-`md/prompt.md` §5's repository layout). See `md/progress.md` for the authoritative checklist.
+This is a rough first draft of Wave 1 (Module 1: Intake & Extraction, the minimum of Module 7:
+Governance & Audit needed for Module 1 to log through it) plus a draft of Module 2: Scoring Engine
+(must-have gating, weighted/curve-adjusted dimension scoring, tier classification, JRP versioning +
+audit logging — all deterministic, no LLM/agent input anywhere in the module, per FR-9). **Not yet
+built:** manual-review SLA monitoring/alerting, incident routing, weekly operational review, Talent
+Pool Store, Candidate Feedback storage, the Module 1 -> Module 2 profile adapter, one-round-one-
+version enforcement, the NFR-6 rollback hook, and Modules 3 through 6 entirely (empty placeholder
+packages only, per `md/prompt.md` §5's repository layout). See `md/progress.md` for the
+authoritative checklist.
