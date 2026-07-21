@@ -11,10 +11,8 @@ from hr_digital_employee.intake_extraction.extraction import ExtractionService
 from hr_digital_employee.intake_extraction.injection_screening import screen
 from hr_digital_employee.intake_extraction.manual_review_queue import ManualReviewQueue
 from hr_digital_employee.intake_extraction.models import (
-    MUST_HAVE_CONFIDENCE_THRESHOLD,
     Candidate,
     ExtractedResume,
-    FieldStatus,
     ManualReviewItem,
     MatchOutcome,
     QueueReason,
@@ -22,6 +20,10 @@ from hr_digital_employee.intake_extraction.models import (
 )
 from hr_digital_employee.intake_extraction.pdf_text import extract_text
 from hr_digital_employee.intake_extraction.text_extraction_log import TextExtractionLog
+
+_NO_PARSER_VERSION = "n/a"
+"""Stamped on manual-review audit events raised before extraction ever ran (unparseable file,
+suspected injection, ambiguous identity) -- there is no parser output to version in those cases."""
 
 _MANUAL_REVIEW_AUDIT_ACTION: dict[QueueReason, str] = {
     QueueReason.UNPARSEABLE_FILE: "unparseable_file_flagged",
@@ -74,9 +76,6 @@ class IngestionGateway:
             )
             return None
 
-        if self._text_log is not None:
-            self._text_log.append(submission, raw_text)
-
         screening = screen(raw_text)
         if screening.suspected_injection:
             self._route_to_manual_review(
@@ -86,12 +85,16 @@ class IngestionGateway:
             )
             return None
 
+        if self._text_log is not None:
+            self._text_log.append(submission, screening.cleaned_text)
+
         extracted = self._extraction_service.extract(screening.cleaned_text)
         if self._has_low_confidence_must_have(extracted):
             self._route_to_manual_review(
                 submission,
                 QueueReason.LOW_CONFIDENCE_MUST_HAVE,
                 "must-have field below confidence threshold",
+                version=extracted.parser_version,
             )
             return None
 
@@ -119,25 +122,29 @@ class IngestionGateway:
     def _has_low_confidence_must_have(self, extracted: ExtractedResume) -> bool:
         # Skills and Experience stand in here for "fields a JRP might mark must-have" -- the
         # real must-have determination is JRP-specific and lives in Module 2 (Scoring Engine).
-        for candidate_field in (extracted.skills, extracted.experience):
-            if (
-                candidate_field.status is FieldStatus.VERIFIED
-                and candidate_field.confidence < MUST_HAVE_CONFIDENCE_THRESHOLD
-            ):
-                return True
-        return False
+        # A field that's UNVERIFIED (section missing entirely) never "meets" the threshold either
+        # -- it must route to manual review just like a low-confidence VERIFIED field, not sail
+        # through unflagged (design.md §3.2, FR-3).
+        return any(
+            not candidate_field.meets_must_have_confidence
+            for candidate_field in (extracted.skills, extracted.experience)
+        )
 
     def _route_to_manual_review(
-        self, submission: RawSubmission, reason: QueueReason, detail: str
+        self,
+        submission: RawSubmission,
+        reason: QueueReason,
+        detail: str,
+        version: str = _NO_PARSER_VERSION,
     ) -> None:
         self._audit_log.record(
             AuditEvent(
                 actor="ingestion_gateway",
-                entity_ref=submission.candidate_email or submission.candidate_phone or "unknown",
+                entity_ref=submission.display_identifier,
                 action=_MANUAL_REVIEW_AUDIT_ACTION[reason],
                 reason=detail,
                 timestamp=datetime.now(UTC),
-                version="1.0",
+                version=version,
             )
         )
         self._manual_review_queue.enqueue(

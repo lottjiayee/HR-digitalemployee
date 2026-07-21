@@ -123,11 +123,18 @@ def test_t1_1b_valid_real_pdf_is_processed_end_to_end() -> None:
     assert extracted.skills.value == ["Python, SQL"]
 
 
-def test_real_world_functional_resume_pdf_is_processed_end_to_end() -> None:
+def test_real_world_functional_resume_pdf_with_no_skills_heading_routes_to_manual_review() -> None:
     # Regression fixture: anonymized structure of a real "functional resume" template PDF used
     # during manual testing, run through a real PDF byte stream (not just a plain-text stand-in)
     # so pdf_text.py's pypdf-based text-layer extraction is exercised too. It uses "Employment
-    # History" rather than the literal word "Experience" for its most job-history-like heading.
+    # History" rather than the literal word "Experience" for its most job-history-like heading,
+    # and (like the real template) has no section literally headed "Skills" -- the extraction-level
+    # correctness of this exact template is covered by
+    # test_extraction.py::test_real_world_resume_with_multiple_experience_subheadings_
+    # consolidates_into_one_field. At the gateway level, the missing Skills field is UNVERIFIED,
+    # which must route to manual review rather than being silently processed (design.md §3.2,
+    # FR-3) -- this is a regression test for that gateway-level routing, not the extraction
+    # heuristic itself.
     pdf_bytes = build_pdf_with_text(
         [
             "Career Summary",
@@ -143,15 +150,15 @@ def test_real_world_functional_resume_pdf_is_processed_end_to_end() -> None:
             "- BS in Early Childhood Development (1999)",
         ]
     )
-    gateway, queue, _audit = _build_gateway(
+    gateway, queue, audit = _build_gateway(
         [_submission(pdf_bytes, email="g@example.com", name="Functional Resume")]
     )
     results = gateway.run_once()
 
-    assert len(results) == 1
-    _candidate, extracted = results[0]
-    assert "Counseling Supervisor" in extracted.experience.value
-    assert "Employment History" in extracted.experience.value
+    assert results == []
+    assert len(queue) == 1
+    assert queue.items()[0].reason is QueueReason.LOW_CONFIDENCE_MUST_HAVE
+    assert any(e.action == "low_confidence_must_have_flagged" for e in audit.all_events())
 
 
 @pytest.mark.skipif(

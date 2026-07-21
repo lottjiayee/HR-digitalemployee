@@ -25,12 +25,11 @@ class TextExtractionLog:
         self._path = path
 
     def append(self, submission: RawSubmission, text: str) -> None:
-        identifier = submission.candidate_email or submission.candidate_phone or "unknown"
         header = (
             f"{_SEPARATOR}\n"
             f"received_at={submission.received_at.isoformat()} "
             f"channel={submission.channel.value} "
-            f"candidate={identifier}\n"
+            f"candidate={submission.display_identifier}\n"
             f"{_SEPARATOR}\n"
         )
         with self._path.open("a", encoding="utf-8") as handle:

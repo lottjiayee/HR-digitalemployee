@@ -100,6 +100,21 @@ splitter remains a stub — other real-world headings (e.g. "Professional Experi
 History") may still go unrecognized; see
 `tests/intake_extraction/test_extraction.py::test_work_history_header_is_recognized_as_experience`.
 
+## Manual-review routing on low-confidence must-have fields
+
+**Fixed 2026-07-21:** `IngestionGateway._has_low_confidence_must_have()` only checked the
+confidence threshold when a field's status was `VERIFIED`. A field that's `UNVERIFIED` (its
+section is missing from the resume entirely, e.g. no "Skills:" heading anywhere) never entered
+that branch, so a resume missing a must-have-candidate section was silently treated as fully
+processed instead of routed to manual review — the opposite of `design.md` §3.2 ("Fields below the
+must-have confidence threshold are marked Unverified and routed to manual review") and FR-3. Fixed
+by reusing `ExtractedField.meets_must_have_confidence` (already defined on the model, already
+false for `UNVERIFIED`) instead of re-deriving the check by hand in the gateway. Found via
+`code-review` skill audit against design.md/FR-3, not via a failing test — no existing test
+exercised the "section missing entirely, not just short" combination; see
+`tests/intake_extraction/test_gateway.py::test_real_world_functional_resume_pdf_with_no_skills_heading_routes_to_manual_review`,
+which previously asserted the buggy pass-through behavior and now asserts the correct routing.
+
 ## Malware/sandbox scanning
 
 **Status:** Stubbed — not yet implemented

@@ -66,6 +66,11 @@ class RawSubmission:
     file_bytes: bytes
     received_at: datetime
 
+    @property
+    def display_identifier(self) -> str:
+        """Best available identifier for logging/audit -- never blank, never raises."""
+        return self.candidate_email or self.candidate_phone or "unknown"
+
 
 class QueueReason(enum.Enum):
     LOW_CONFIDENCE_MUST_HAVE = "low_confidence_must_have"

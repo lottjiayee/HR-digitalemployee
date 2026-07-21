@@ -43,13 +43,15 @@ def tesseract_available() -> bool:
     """True if the Tesseract binary can be found (PATH or the Windows fallback locations).
 
     Exposed so callers -- including tests -- can skip OCR-dependent work with a clear reason on a
-    machine where the Tesseract binary isn't installed, rather than failing on every image.
+    machine where the Tesseract binary isn't installed, rather than failing on every image. A pure
+    query -- it never mutates `pytesseract`'s global config; `extract_text` configures the
+    fallback path itself, at the point it actually needs it.
     """
     try:
         pytesseract.get_tesseract_version()
         return True
     except pytesseract.TesseractNotFoundError:
-        return _use_fallback_tesseract_path()
+        return _find_fallback_tesseract_path() is not None
 
 
 def extract_text(file_bytes: bytes) -> str | None:
@@ -69,9 +71,15 @@ def extract_text(file_bytes: bytes) -> str | None:
     return text if text.strip() else None
 
 
+def _find_fallback_tesseract_path() -> Path | None:
+    return next((p for p in _WINDOWS_FALLBACK_TESSERACT_PATHS if p.exists()), None)
+
+
 def _use_fallback_tesseract_path() -> bool:
-    for candidate in _WINDOWS_FALLBACK_TESSERACT_PATHS:
-        if candidate.exists():
-            pytesseract.pytesseract.tesseract_cmd = str(candidate)
-            return True
-    return False
+    """Configure pytesseract to use a fallback install path, if one exists. Mutates global state
+    -- called only from `extract_text`, at the point OCR is actually about to run."""
+    candidate = _find_fallback_tesseract_path()
+    if candidate is None:
+        return False
+    pytesseract.pytesseract.tesseract_cmd = str(candidate)
+    return True
