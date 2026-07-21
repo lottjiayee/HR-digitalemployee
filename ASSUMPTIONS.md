@@ -17,6 +17,11 @@ additionally gated behind Business API verification (see `md/requirement.md` §7
 exist at all.
 **Why this default:** keeps Module 1 fully testable without committing to Microsoft Graph, IMAP, or
 any specific vendor SDK.
+**Fixed 2026-07-21:** `LocalFolderChannelAdapter.fetch_new_submissions()` re-returned every file in
+the folder on every call, contradicting this section's own contract ("each new item since the last
+fetch") -- calling `IngestionGateway.run_once()` on a loop (its only realistic usage) would
+reprocess the same resumes forever. Now tracks already-returned paths in memory per adapter
+instance, matching the cursor-like semantics a real Email/Teams adapter would use.
 
 ## PDF byte-to-text extraction
 

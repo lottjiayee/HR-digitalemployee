@@ -35,3 +35,16 @@ def test_missing_folder_returns_empty_list(tmp_path: Path) -> None:
     adapter = LocalFolderChannelAdapter(tmp_path / "does_not_exist")
 
     assert adapter.fetch_new_submissions() == []
+
+
+def test_a_file_already_returned_is_not_returned_again_on_the_next_fetch(tmp_path: Path) -> None:
+    (tmp_path / "resume1.pdf").write_bytes(b"Skills:\nPython\n")
+    adapter = LocalFolderChannelAdapter(tmp_path)
+
+    first = adapter.fetch_new_submissions()
+    (tmp_path / "resume2.pdf").write_bytes(b"Skills:\nSQL\n")
+    second = adapter.fetch_new_submissions()
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert second[0].file_bytes == b"Skills:\nSQL\n"

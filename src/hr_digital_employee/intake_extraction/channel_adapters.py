@@ -35,13 +35,19 @@ class LocalFolderChannelAdapter:
     def __init__(self, folder: Path, channel: SubmissionChannel = SubmissionChannel.EMAIL) -> None:
         self._folder = folder
         self._channel = channel
+        self._seen_paths: set[Path] = set()
 
     def fetch_new_submissions(self) -> list[RawSubmission]:
+        """Return submissions for files not already returned by a previous call on this adapter
+        instance -- a real Email/Teams adapter tracks "since the last fetch" via a cursor/message
+        id; this stub tracks it as an in-memory set of paths already seen (ASSUMPTIONS.md)."""
         submissions: list[RawSubmission] = []
         if not self._folder.exists():
             return submissions
         matches = (path for pattern in _SUPPORTED_FILE_GLOBS for path in self._folder.glob(pattern))
-        for file_path in sorted(matches):
+        new_paths = sorted(path for path in matches if path not in self._seen_paths)
+        for file_path in new_paths:
+            self._seen_paths.add(file_path)
             submissions.append(
                 RawSubmission(
                     channel=self._channel,
