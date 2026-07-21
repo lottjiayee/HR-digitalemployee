@@ -54,3 +54,37 @@ def build_sidebar_resume_image() -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def build_clean_layout_with_icon_row_image() -> bytes:
+    """A single-column resume layout where small icon glyphs are confined to one contact-info
+    row and the rest is plain paragraph text -- the contrasting, high-accuracy counterpart to
+    `build_sidebar_resume_image()`'s dense multi-column icon layout. A real-world resume image
+    with this shape (icons isolated to one line, body text in one clean column) was observed to
+    OCR close to perfectly aside from that one icon row (see ASSUMPTIONS.md)."""
+    width, height = 700, 260
+    image = Image.new("RGB", (width, height), color="white")
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype("arial.ttf", 20)
+    except OSError:
+        font = ImageFont.load_default()
+
+    for index in range(3):
+        x = 20 + index * 220
+        draw.ellipse([x, 15, x + 20, 35], fill="black")  # icon glyph, no text of its own
+    contact_line = "(555) 123-4567 | jane.doe@example.com | San Jose, CA"
+    draw.text((20, 45), contact_line, fill="black", font=font)
+
+    body_lines = [
+        "PROFESSIONAL EXPERIENCE",
+        "Facility Property Manager | February 2017",
+        "Silicon Valley Tech Park, San Jose, CA",
+        "Manage preventive maintenance for corporate campuses",
+    ]
+    for index, line in enumerate(body_lines):
+        draw.text((20, 90 + index * 40), line, fill="black", font=font)
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()

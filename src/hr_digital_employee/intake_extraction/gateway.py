@@ -21,6 +21,7 @@ from hr_digital_employee.intake_extraction.models import (
     RawSubmission,
 )
 from hr_digital_employee.intake_extraction.pdf_text import extract_text
+from hr_digital_employee.intake_extraction.text_extraction_log import TextExtractionLog
 
 _MANUAL_REVIEW_AUDIT_ACTION: dict[QueueReason, str] = {
     QueueReason.UNPARSEABLE_FILE: "unparseable_file_flagged",
@@ -44,12 +45,14 @@ class IngestionGateway:
         dedup_service: IdentityDedupService,
         manual_review_queue: ManualReviewQueue,
         audit_log: AuditLog,
+        text_log: TextExtractionLog | None = None,
     ) -> None:
         self._channel_adapters = channel_adapters
         self._extraction_service = extraction_service
         self._dedup_service = dedup_service
         self._manual_review_queue = manual_review_queue
         self._audit_log = audit_log
+        self._text_log = text_log
 
     def run_once(self) -> list[tuple[Candidate, ExtractedResume]]:
         """Fetch new submissions from every channel and process each one."""
@@ -70,6 +73,9 @@ class IngestionGateway:
                 submission, QueueReason.UNPARSEABLE_FILE, "unparseable file"
             )
             return None
+
+        if self._text_log is not None:
+            self._text_log.append(submission, raw_text)
 
         screening = screen(raw_text)
         if screening.suspected_injection:

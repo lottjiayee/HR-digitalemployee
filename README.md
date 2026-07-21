@@ -6,7 +6,7 @@ Hong Kong PDPO compliance.
 
 **Status:** Rough first-draft code now exists (`src/hr_digital_employee/`, Python) covering Module 1
 (Intake & Extraction) end-to-end — including real PDF text extraction via `pypdf` and local image
-OCR via Tesseract, not just plain-text stand-ins — and Module 7's audit-log interface — 44 tests,
+OCR via Tesseract, not just plain-text stand-ins — and Module 7's audit-log interface — 54 tests,
 mypy --strict / ruff all passing. Modules 2–6 are still empty placeholders. See `ASSUMPTIONS.md` at
 the repo root for every
 stub this draft makes, and `md/progress.md` for the live tracking checklist and current open

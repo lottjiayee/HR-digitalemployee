@@ -147,6 +147,23 @@ alerting to the named owner — who is also not yet assigned, see `md/progress.m
 **Why this default:** keeps Module 1's gateway testable in isolation; SLA monitoring itself belongs
 to Module 7 and is not yet built (see "Not yet built" below).
 
+## Extracted-text log persistence
+
+**Status:** Stubbed — plain append-only file, path chosen by the caller
+**What was built:** `TextExtractionLog` (`intake_extraction/text_extraction_log.py`) — appends
+every successfully-extracted submission's raw text (PDF text layer, OCR output, or plain-text
+fallback) to one growing `.txt` file, with a header per entry (timestamp, channel, candidate
+identifier). Wired into `IngestionGateway` as an optional constructor collaborator
+(`text_log: TextExtractionLog | None`); when omitted (the default), nothing is written, so this is
+opt-in and every existing test/caller is unaffected.
+**What a real implementation must satisfy:** the file contains raw candidate resume text, i.e.
+personal data — a real deployment needs the same retention/residency treatment as the audit log
+above (see "Audit log persistence"), not an indefinitely-growing plaintext file on a local disk.
+**Why this default:** requested specifically as a way to inspect what extraction/OCR actually
+produced for a real submission without re-running the pipeline by hand each time; deliberately
+kept as a plain file rather than reusing `AuditLog`'s `AuditEvent`, since `AuditEvent` has no
+free-text payload field and is meant for decision-relevant events, not raw content dumps.
+
 ## What this draft does NOT cover yet
 
 This is a rough first draft of Wave 1 only (Module 1: Intake & Extraction, and the minimum of

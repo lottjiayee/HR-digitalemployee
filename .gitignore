@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .coverage
 .claude/
+*.egg-info/
+uv.lock

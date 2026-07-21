@@ -1,6 +1,6 @@
 # HR Digital Employee — Development Progress
 
-**Last updated:** 2026-07-20
+**Last updated:** 2026-07-21
 **Source docs:** [requirement.md](./requirement.md), [design.md](./design.md), [modules/](./modules/)
 
 Status values used throughout: `Not Started` → `In Progress` → `Blocked` → `Done`
@@ -23,8 +23,10 @@ Status values used throughout: `Not Started` → `In Progress` → `Blocked` →
 1's full pipeline (channel adapters — now also picking up image files, not just PDFs — real PDF
 text extraction via `pypdf`, local image OCR via Tesseract, injection screening, structured-field
 extraction, dedup, manual review queue, gateway orchestrator — the gateway now audit-logs every
-manual-review routing reason, not just suspected injection) and Module 7's `AuditEvent`/`AuditLog`
-interface + in-memory implementation. 44 tests, mypy --strict / ruff / ruff format all pass (OCR
+manual-review routing reason, not just suspected injection, and optionally appends every
+successfully-extracted submission's raw text to a persistent `TextExtractionLog`) and Module 7's
+`AuditEvent`/`AuditLog` interface + in-memory implementation. 54 tests, mypy --strict / ruff / ruff
+format all pass (OCR
 tests skip gracefully on a machine without the Tesseract binary). See `ASSUMPTIONS.md` at the repo
 root for every stub this draft makes — including an observed, non-theoretical accuracy tradeoff for
 local OCR vs. a managed cloud provider. Modules 2–6 are empty placeholder packages only.

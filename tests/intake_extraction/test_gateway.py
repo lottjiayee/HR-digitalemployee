@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from image_fixtures import build_image_with_text
@@ -19,6 +20,7 @@ from hr_digital_employee.intake_extraction.models import (
     RawSubmission,
     SubmissionChannel,
 )
+from hr_digital_employee.intake_extraction.text_extraction_log import TextExtractionLog
 
 GOOD_RESUME = (
     b"Skills:\nPython\nSQL\n\nProjects:\nBuilt a pipeline\n\n"
@@ -38,6 +40,7 @@ class _StaticChannelAdapter:
 
 def _build_gateway(
     submissions: list[RawSubmission],
+    text_log: TextExtractionLog | None = None,
 ) -> tuple[IngestionGateway, ManualReviewQueue, InMemoryAuditLog]:
     queue = ManualReviewQueue()
     audit_log = InMemoryAuditLog()
@@ -47,6 +50,7 @@ def _build_gateway(
         dedup_service=IdentityDedupService(),
         manual_review_queue=queue,
         audit_log=audit_log,
+        text_log=text_log,
     )
     return gateway, queue, audit_log
 
@@ -176,6 +180,35 @@ def test_image_resume_is_ocrd_and_processed_end_to_end() -> None:
     assert len(queue) == 0
     _candidate, extracted = results[0]
     assert extracted.skills.value == ["Python, SQL"]
+
+
+def test_extracted_text_is_appended_to_the_text_log_when_one_is_configured(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "extracted_text.txt"
+    text_log = TextExtractionLog(log_path)
+    gateway, _queue, _audit = _build_gateway(
+        [_submission(GOOD_RESUME, email="h@example.com", name="Jane Doe")],
+        text_log=text_log,
+    )
+
+    gateway.run_once()
+
+    logged = log_path.read_text(encoding="utf-8")
+    assert "h@example.com" in logged
+    assert "Python\nSQL" in logged
+
+
+def test_unparseable_submission_is_not_written_to_the_text_log(tmp_path: Path) -> None:
+    log_path = tmp_path / "extracted_text.txt"
+    text_log = TextExtractionLog(log_path)
+    gateway, _queue, _audit = _build_gateway(
+        [_submission(CORRUPTED_PDF_BYTES)], text_log=text_log
+    )
+
+    gateway.run_once()
+
+    assert not log_path.exists()
 
 
 def test_t1_8_matching_email_across_submissions_merges_profile() -> None:
