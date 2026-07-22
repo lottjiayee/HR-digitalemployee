@@ -114,6 +114,14 @@ def _parse_weighted_criterion(
 
     education_level = entry.get("required_education_level")
     required_skills = entry.get("required_skills")
+    if required_skills is not None and not isinstance(required_skills, (list, tuple)):
+        # A bare string (e.g. `required_skills: Python`, forgetting the `[...]`) would otherwise
+        # pass through `tuple(...)` silently as one-character "skills" ('P', 'y', 't', 'h', ...)
+        # rather than raising -- tanking the mandatory_skills score with no diagnostic at all.
+        raise ValueError(
+            f"required_skills must be a list, got {type(required_skills).__name__}: "
+            f"{required_skills!r}"
+        )
 
     return WeightedCriterion(
         dimension=dimension,
@@ -143,6 +151,8 @@ def _parse_education_level(value: str) -> EducationLevel:
 def _parse_tier_thresholds(entry: dict[str, Any] | None) -> TierThresholds:
     if entry is None:
         return TierThresholds()
+    if not isinstance(entry, dict):
+        raise ValueError(f"tier_thresholds must be a mapping, got {type(entry).__name__}")
     return TierThresholds(
         high_match_min=float(entry.get("high_match_min", 80.0)),
         mid_match_min=float(entry.get("mid_match_min", 60.0)),

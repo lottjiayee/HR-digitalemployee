@@ -77,6 +77,9 @@ class QueueReason(enum.Enum):
     UNPARSEABLE_FILE = "unparseable_file"
     SUSPECTED_INJECTION = "suspected_injection"
     AMBIGUOUS_IDENTITY_MATCH = "ambiguous_identity_match"
+    PROCESSING_ERROR = "processing_error"
+    """An exception escaped every known-shape check above (e.g. a corrupted PDF pypdf can't even
+    partially parse) -- routed to manual review rather than left to crash the whole intake batch."""
 
 
 @dataclass(frozen=True)

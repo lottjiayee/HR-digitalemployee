@@ -16,6 +16,7 @@ from hr_digital_employee.intake_extraction.extraction import ExtractionService
 from hr_digital_employee.intake_extraction.gateway import IngestionGateway
 from hr_digital_employee.intake_extraction.manual_review_queue import ManualReviewQueue
 from hr_digital_employee.intake_extraction.models import (
+    ExtractedResume,
     QueueReason,
     RawSubmission,
     SubmissionChannel,
@@ -97,6 +98,56 @@ def test_t1_6_unparseable_file_routes_to_manual_queue_not_dropped() -> None:
     assert len(queue) == 1
     assert queue.items()[0].reason is QueueReason.UNPARSEABLE_FILE
     assert any(e.action == "unparseable_file_flagged" for e in audit.all_events())
+
+
+class _RaisingExtractionService:
+    """Stands in for anything unexpected escaping `_process_submission`'s own known-shape
+    handling (e.g. a corrupted PDF pypdf can't even partially parse, raising something other than
+    `PyPdfError`) -- a deterministic, pypdf-version-independent way to exercise that path."""
+
+    def extract(self, text: str) -> ExtractedResume:
+        raise RuntimeError("simulated unexpected extraction failure")
+
+
+def test_an_unexpected_exception_during_processing_routes_to_manual_review_not_a_crash() -> None:
+    # Regression: run_once() previously had no exception boundary around a single submission, so
+    # anything escaping the known-shape checks (unparseable/injection/low-confidence/ambiguous)
+    # propagated out and aborted the whole batch -- silently dropping every submission queued
+    # after the bad one, with no audit event and no manual-review routing.
+    queue = ManualReviewQueue()
+    audit_log = InMemoryAuditLog()
+    gateway = IngestionGateway(
+        channel_adapters=[_StaticChannelAdapter([_submission(GOOD_RESUME)])],
+        extraction_service=_RaisingExtractionService(),  # type: ignore[arg-type]
+        dedup_service=IdentityDedupService(),
+        manual_review_queue=queue,
+        audit_log=audit_log,
+    )
+
+    results = gateway.run_once()
+
+    assert results == []
+    assert len(queue) == 1
+    assert queue.items()[0].reason is QueueReason.PROCESSING_ERROR
+    assert any(e.action == "processing_error_flagged" for e in audit_log.all_events())
+
+
+def test_a_bad_submission_does_not_stop_the_rest_of_the_batch_from_processing() -> None:
+    good_submission = _submission(GOOD_RESUME, email="ok@example.com", name="Jane Doe")
+    gateway = IngestionGateway(
+        channel_adapters=[
+            _StaticChannelAdapter([_submission(CORRUPTED_PDF_BYTES), good_submission])
+        ],
+        extraction_service=ExtractionService(),
+        dedup_service=IdentityDedupService(),
+        manual_review_queue=ManualReviewQueue(),
+        audit_log=InMemoryAuditLog(),
+    )
+
+    results = gateway.run_once()
+
+    assert len(results) == 1
+    assert results[0][0].email == "ok@example.com"
 
 
 def test_t1_1b_valid_real_pdf_is_processed_end_to_end() -> None:

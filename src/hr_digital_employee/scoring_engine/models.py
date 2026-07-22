@@ -99,8 +99,20 @@ class MustHaveCriterion:
     def __post_init__(self) -> None:
         if self.kind is MustHaveKind.REQUIRED_SKILL and not self.required_skill:
             raise ValueError("REQUIRED_SKILL must-have criteria need required_skill set")
-        if self.kind is MustHaveKind.MINIMUM_YEARS_EXPERIENCE and self.minimum_years is None:
-            raise ValueError("MINIMUM_YEARS_EXPERIENCE must-have criteria need minimum_years set")
+        if self.kind is MustHaveKind.MINIMUM_YEARS_EXPERIENCE:
+            if self.minimum_years is None:
+                raise ValueError(
+                    "MINIMUM_YEARS_EXPERIENCE must-have criteria need minimum_years set"
+                )
+            # A non-numeric value here (e.g. a YAML author typing "five" instead of 5) would
+            # otherwise parse successfully and only crash later, mid-scoring, when engine.py
+            # compares a candidate's years against it -- caught here instead, at construction.
+            if isinstance(self.minimum_years, bool) or not isinstance(
+                self.minimum_years, (int, float)
+            ):
+                raise TypeError(f"minimum_years must be a number, got {self.minimum_years!r}")
+            if self.minimum_years < 0:
+                raise ValueError(f"minimum_years cannot be negative, got {self.minimum_years}")
 
 
 @dataclass(frozen=True)

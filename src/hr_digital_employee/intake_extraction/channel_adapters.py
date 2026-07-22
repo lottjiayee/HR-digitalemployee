@@ -14,10 +14,16 @@ from typing import Protocol
 
 from hr_digital_employee.intake_extraction.models import RawSubmission, SubmissionChannel
 
-_SUPPORTED_FILE_GLOBS = ("*.pdf", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.webp")
+_SUPPORTED_EXTENSIONS = frozenset({".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"})
 """Extensions this stub picks up -- mirrors what pdf_text.extract_text() can actually read
 (PDF text layer or OCR'd image); a real Email/Teams connector receives attachments by content,
-not by filename extension, so this glob is purely an artifact of the local-folder stub."""
+not by filename extension, so this is purely an artifact of the local-folder stub.
+
+Matched via `Path.suffix.lower()` rather than a `Path.glob("*.pdf")`-style pattern deliberately --
+glob's case sensitivity follows the OS (case-insensitive on Windows, case-sensitive on the Linux
+this would actually deploy to), so a real-world `Resume.PDF`/`SCAN0001.PDF` would silently never be
+picked up at all -- not read, not queued to manual review, not logged anywhere -- on a case-
+sensitive filesystem with the glob-pattern approach."""
 
 
 class ChannelAdapter(Protocol):
@@ -44,10 +50,22 @@ class LocalFolderChannelAdapter:
         submissions: list[RawSubmission] = []
         if not self._folder.exists():
             return submissions
-        matches = (path for pattern in _SUPPORTED_FILE_GLOBS for path in self._folder.glob(pattern))
+        matches = (
+            path for path in self._folder.iterdir() if path.suffix.lower() in _SUPPORTED_EXTENSIONS
+        )
         new_paths = sorted(path for path in matches if path not in self._seen_paths)
         for file_path in new_paths:
             self._seen_paths.add(file_path)
+            try:
+                # A file listed a moment ago can vanish before it's read (a concurrent cleanup
+                # job, a flaky network share, another process moving already-processed files) --
+                # skip just this one file rather than losing the whole fetch to an uncaught
+                # FileNotFoundError (it was already added to _seen_paths above, so a permanently
+                # gone file isn't retried forever; one that reappears will look "new" again since
+                # nothing else observed it).
+                file_bytes = file_path.read_bytes()
+            except OSError:
+                continue
             submissions.append(
                 RawSubmission(
                     channel=self._channel,
@@ -58,7 +76,7 @@ class LocalFolderChannelAdapter:
                     # extension) as the closest available human-readable identifier -- otherwise
                     # every submission is indistinguishable except by its generated candidate_id.
                     candidate_name=file_path.stem,
-                    file_bytes=file_path.read_bytes(),
+                    file_bytes=file_bytes,
                     received_at=datetime.now(UTC),
                 )
             )

@@ -3,6 +3,8 @@ external binary fixture files on disk."""
 
 from __future__ import annotations
 
+import struct
+import zlib
 from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageFont
@@ -27,6 +29,24 @@ def build_image_with_text(lines: list[str], image_format: str = "PNG") -> bytes:
 
 
 CORRUPTED_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"this claims to be a PNG but has no valid chunk data"
+
+
+def build_decompression_bomb_png_bytes() -> bytes:
+    """A well-formed PNG header declaring absurd dimensions (60000x60000) but almost no actual
+    pixel data -- reproduces a decompression-bomb submission cheaply (no multi-gigabyte buffer is
+    ever built; `Image.new()`/a real Pillow-rendered image can't be used to test this at all, since
+    constructing one this size would itself exhaust memory). Built with raw PNG chunks rather than
+    Pillow because Pillow's own encoder would perform the same size check this fixture exists to
+    trigger."""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    width = height = 60_000
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    idat = zlib.compress(b"\x00" + b"\x00" * (width * 3))  # one scanline only, truncated on purpose
+    return signature + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
 
 
 def build_sidebar_resume_image() -> bytes:

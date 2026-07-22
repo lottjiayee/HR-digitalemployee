@@ -45,12 +45,28 @@ def _years_of_experience(experience: ExtractedField[str]) -> float:
         return float(max(int(m) for m in explicit_matches))
 
     # Fallback: no "N years" phrase -- sum each year range's own length (not the overall min-to-max
-    # span, which would overcount a candidate with a career-break gap between two ranges).
-    ranges = _YEAR_RANGE_PATTERN.findall(text)
+    # span, which would overcount a candidate with a career-break gap between two ranges). Ranges
+    # are merged first so two overlapping/concurrent roles (e.g. a side contract during a full-time
+    # job) don't double-count the overlapping years.
+    ranges = [
+        (int(start), int(end))
+        for start, end in _YEAR_RANGE_PATTERN.findall(text)
+        if int(end) >= int(start)
+    ]
     if ranges:
-        return float(sum(max(int(end) - int(start), 0) for start, end in ranges))
+        return float(sum(end - start for start, end in _merge_ranges(ranges)))
 
     return 0.0
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _education_level(education: ExtractedField[str]) -> EducationLevel:

@@ -6,6 +6,7 @@ import pytest
 from image_fixtures import (
     CORRUPTED_PNG_BYTES,
     build_clean_layout_with_icon_row_image,
+    build_decompression_bomb_png_bytes,
     build_image_with_text,
     build_sidebar_resume_image,
 )
@@ -47,6 +48,15 @@ def test_real_image_text_is_ocrd() -> None:
 @requires_tesseract
 def test_corrupted_image_bytes_are_unparseable() -> None:
     assert ocr.extract_text(CORRUPTED_PNG_BYTES) is None
+
+
+def test_decompression_bomb_image_is_unparseable_not_a_crash() -> None:
+    # Security regression: a resume image whose header declares far more pixels than its actual
+    # data backs up must route to manual review like any other unparseable file, not raise
+    # PIL.Image.DecompressionBombError uncaught and crash the whole intake batch (gateway.py's
+    # run_once() has no per-submission try/except). Doesn't need Tesseract -- Image.open() itself
+    # raises before any OCR call is made.
+    assert ocr.extract_text(build_decompression_bomb_png_bytes()) is None
 
 
 @requires_tesseract

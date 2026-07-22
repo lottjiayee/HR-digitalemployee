@@ -64,7 +64,11 @@ see Module 6).
 - [x] Prompt/pipeline: structured-input-only enforcement (no raw resume text passthrough) —
       enforced by the function signatures themselves, no raw-text parameter exists anywhere
 - [x] Summary generation (3–5 sentences, factual)
-- [x] Sentence-level source anchoring + drop-unanchored-sentence logic
+- [x] Sentence-level source anchoring + drop-unanchored-sentence logic — **confirmed gap:** the
+      one-directional word-overlap check can be defeated by a sentence padding a passage's real
+      keywords with fabricated content; low live-impact only because `TemplateLLMProvider` never
+      fabricates, but a real LLM provider would need a stronger (semantic, not word-overlap) check
+      here — see ASSUMPTIONS.md, not code-patched deliberately
 - [x] Interview question generation (verification / gap / behavioral)
 - [x] Red-flag detection (inconsistencies, keyword-stuffing, job-change patterns)
 - [x] Red-flag framing reviewed against Module 4 fairness mitigations (gaps = neutral, not penalty)

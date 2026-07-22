@@ -32,7 +32,26 @@ _KEYWORD_STUFFING_REPEAT_COUNT = 3
 
 
 def _year_ranges(text: str) -> list[tuple[int, int]]:
-    return sorted((int(start), int(end)) for start, end in _YEAR_RANGE_PATTERN.findall(text))
+    # A reversed range (e.g. a typo'd "2020-2015") is dropped rather than sorted in as-is -- letting
+    # it through would fabricate/inflate an apparent gap around it (see ASSUMPTIONS.md).
+    return sorted(
+        (int(start), int(end))
+        for start, end in _YEAR_RANGE_PATTERN.findall(text)
+        if int(end) >= int(start)
+    )
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Collapses overlapping/concurrent ranges (e.g. two roles held at the same time) into one,
+    so `_detect_employment_gap` doesn't mistake the tail of a longer role for a gap next to a
+    shorter, concurrent one. `ranges` must already be sorted (as `_year_ranges` returns)."""
+    merged: list[tuple[int, int]] = []
+    for start, end in ranges:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _detect_inconsistency(text: str) -> RedFlag | None:
@@ -69,7 +88,7 @@ def _detect_frequent_job_changes(text: str) -> RedFlag | None:
 
 
 def _detect_employment_gap(text: str) -> RedFlag | None:
-    ranges = _year_ranges(text)
+    ranges = _merge_ranges(_year_ranges(text))
     for (_start_earlier, end_earlier), (start_later, _end_later) in zip(
         ranges, ranges[1:], strict=False
     ):

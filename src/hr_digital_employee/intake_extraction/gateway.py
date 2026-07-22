@@ -30,6 +30,7 @@ _MANUAL_REVIEW_AUDIT_ACTION: dict[QueueReason, str] = {
     QueueReason.SUSPECTED_INJECTION: "suspected_injection_flagged",
     QueueReason.LOW_CONFIDENCE_MUST_HAVE: "low_confidence_must_have_flagged",
     QueueReason.AMBIGUOUS_IDENTITY_MATCH: "ambiguous_identity_match_flagged",
+    QueueReason.PROCESSING_ERROR: "processing_error_flagged",
 }
 """Module 7 requires every decision-relevant routing outcome logged -- one action name per
 QueueReason keeps existing audit consumers (e.g. the injection flag) stable while covering the
@@ -57,11 +58,25 @@ class IngestionGateway:
         self._text_log = text_log
 
     def run_once(self) -> list[tuple[Candidate, ExtractedResume]]:
-        """Fetch new submissions from every channel and process each one."""
+        """Fetch new submissions from every channel and process each one.
+
+        One malformed submission (e.g. a corrupted PDF pypdf can't even partially parse) must not
+        abort the whole batch and silently drop every submission queued after it -- anything that
+        escapes `_process_submission`'s own known-shape handling is caught here and routed to
+        manual review the same way, rather than left to propagate and crash `run_once()` itself.
+        """
         results: list[tuple[Candidate, ExtractedResume]] = []
         for adapter in self._channel_adapters:
             for submission in adapter.fetch_new_submissions():
-                result = self._process_submission(submission)
+                try:
+                    result = self._process_submission(submission)
+                except Exception as error:
+                    self._route_to_manual_review(
+                        submission,
+                        QueueReason.PROCESSING_ERROR,
+                        f"{type(error).__name__}: {error}",
+                    )
+                    continue
                 if result is not None:
                     results.append(result)
         return results

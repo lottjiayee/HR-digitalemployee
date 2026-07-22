@@ -64,7 +64,7 @@ test_architectural_invariants.py` enforces FR-9's determinism wall by AST-checki
 `scoring_engine` may never import `ai_content` or `fairness_compliance`, and `ai_content` may never
 construct a `Score`.
 
-222 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
+235 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
 without the Tesseract binary). See `ASSUMPTIONS.md` at the repo root for every stub this draft
 makes — including an observed, non-theoretical accuracy tradeoff for local OCR vs. a managed cloud
 provider. Module 6 is an empty placeholder package only; Module 5 has the CLI bridge above as a
@@ -112,6 +112,34 @@ field name outside skills/projects/experience/education) was unreachable dead co
 existing test, since `build_source_passages` never emits one — added a dedicated
 `tests/ai_content/test_llm_provider.py` testing the provider in isolation rather than only through
 the summary-generation pipeline. 205 -> 211 tests; no production code changed.
+
+**2026-07-22 security review:** found and fixed two real vulnerabilities (see ASSUMPTIONS.md for
+full write-ups). (1) The new JRP editor's Streamlit server bound every network interface by
+default with no authentication in front of its arbitrary-file-path Load/Save fields — confirmed via
+its own startup banner printing a LAN/public URL alongside the local one; fixed by binding
+`launcher.py` to `127.0.0.1` explicitly. (2) A resume submitted as an image with a header declaring
+far more pixels than its actual data backs up crashed the entire intake batch uncaught
+(`PIL.Image.DecompressionBombError` wasn't among `ocr.py`'s caught exceptions) — the same untrusted-
+input threat model `injection_screening.py` already defends against, with an image-based angle left
+open; fixed by routing it through the existing "unparseable -> manual review" path every other
+malformed file already takes. 222 -> 223 tests.
+
+**2026-07-22 security + logic review, round 2:** three parallel reviews (intake/CLI/JRP-editor,
+scoring engine, AI-content/fairness), each verifying findings by actually running the real code.
+Found and fixed 7 more real bugs (full write-ups in ASSUMPTIONS.md): a missing exception boundary
+in `gateway.py` that let one bad submission crash the whole intake batch; a case-sensitive-glob bug
+that silently dropped any resume with an uppercase extension (`Resume.PDF`) with no audit trail; a
+TOCTOU race in the local-folder channel adapter; a JRP YAML's `minimum_years`/`tier_thresholds`/
+`required_skills` each being able to parse successfully but then either crash later mid-scoring or
+silently produce a wrong score, instead of a clean `JRPConfigError` at load time; and overlapping/
+concurrent job-date ranges being double-counted (`profile_adapter.py`) or misread as a false gap
+(`red_flags.py`), plus a reversed/typo'd date range fabricating a gap in both. One further finding
+-- `ai_content/anchoring.py`'s one-directional coverage check can be defeated by a sentence padding
+a passage's real keywords with fabricated content -- was investigated but deliberately *not*
+code-patched: measured that a naive bidirectional-threshold fix can't actually distinguish this from
+legitimate LLM paraphrasing (a genuine paraphrase's own coverage ratio measured lower than the
+attack's), so it's documented as a confirmed, demonstrated gap needing real semantic verification
+rather than a heuristic that would create false confidence. 223 -> 235 tests; ruff/mypy clean.
 
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving

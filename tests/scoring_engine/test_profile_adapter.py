@@ -98,6 +98,29 @@ def test_years_of_experience_range_fallback_does_not_overcount_a_career_break() 
     assert profile.years_of_experience == 9.0
 
 
+def test_years_of_experience_range_fallback_merges_overlapping_concurrent_roles() -> None:
+    # Regression: summing each range's own length without merging overlaps double-counted a
+    # concurrent side engagement -- (2015-2020) + (2016-2019) used to give 5 + 3 = 8 instead of
+    # the correct 5-year calendar span the two overlapping roles actually cover.
+    resume = _resume(
+        experience=_verified(
+            "2015-2020 Senior Engineer, Example Corp\n2016-2019 Side Contractor, Other Corp"
+        )
+    )
+
+    profile = build_candidate_profile(resume)
+
+    assert profile.years_of_experience == 5.0
+
+
+def test_years_of_experience_ignores_a_reversed_date_range() -> None:
+    resume = _resume(experience=_verified("2020-2015 Typo'd Range, Some Corp"))
+
+    profile = build_candidate_profile(resume)
+
+    assert profile.years_of_experience == 0.0
+
+
 def test_years_of_experience_is_zero_when_experience_is_unverified() -> None:
     profile = build_candidate_profile(_resume())
 

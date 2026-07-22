@@ -55,10 +55,16 @@ def tesseract_available() -> bool:
 
 
 def extract_text(file_bytes: bytes) -> str | None:
-    """OCR an image's text content, or None if it can't be read (routes to manual review)."""
+    """OCR an image's text content, or None if it can't be read (routes to manual review).
+
+    A submitted image is untrusted input (same threat model as injection_screening.py's text
+    defenses): a PNG/etc. header can declare far more pixels than its actual data backs up, and
+    Pillow raises `DecompressionBombError` for that rather than silently allocating a huge buffer.
+    Treated the same as any other unparseable file, not left to crash the whole intake batch.
+    """
     try:
         image = Image.open(BytesIO(file_bytes))
-    except UnidentifiedImageError:
+    except (UnidentifiedImageError, Image.DecompressionBombError):
         return None
 
     try:

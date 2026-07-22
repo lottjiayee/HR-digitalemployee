@@ -59,6 +59,32 @@ def test_repeated_skill_entries_are_flagged_as_keyword_stuffing() -> None:
     assert "python" in stuffing.description.lower()
 
 
+def test_no_false_gap_flag_for_a_continuously_employed_candidate_with_overlapping_roles() -> None:
+    # Regression: the gap detector compared adjacent *unmerged* ranges after sorting, so a
+    # continuous 2015-2020 role containing two shorter overlapping engagements produced a
+    # spurious "gap between 2017 and 2018" even though the candidate was employed the whole time.
+    resume_text = (
+        "Working Experience:\n"
+        "2015-2020 Company A\n2016-2017 Company B (concurrent)\n2018-2019 Company C (concurrent)\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    assert not any(f.kind is RedFlagKind.EMPLOYMENT_GAP for f in flags)
+
+
+def test_no_fabricated_gap_flag_from_a_reversed_typo_date_range() -> None:
+    # Regression: an unvalidated reversed range (e.g. a typo'd "2020-2015") was sorted in as-is
+    # and combined with a later range into a fabricated, inflated gap claim.
+    resume_text = "Working Experience:\n2020-2015 Company X\n2021-2022 Company Y\n"
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    assert not any(f.kind is RedFlagKind.EMPLOYMENT_GAP for f in flags)
+
+
 def test_a_clean_consistent_resume_produces_no_flags() -> None:
     resume_text = (
         "Skills:\nPython\nSQL\n\nWorking Experience:\n2018-2023 Engineer at TechCorp\n"

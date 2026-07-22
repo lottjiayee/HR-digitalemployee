@@ -380,7 +380,8 @@ now without an API key, network call, or vendor commitment.
 
 ## AI-Assisted Content Generation: sentence-anchoring threshold
 
-**Status:** Judgement call, not a spec number
+**Status:** Judgement call, not a spec number -- **plus a confirmed, demonstrated gap, flagged
+rather than patched (2026-07-22 security review)**
 **What was built:** `anchoring.py`'s `MIN_PASSAGE_COVERAGE = 0.5` -- a sentence is anchored to a
 source passage if at least half of that passage's significant (non-stopword, length >= 3) words
 appear in the sentence. Deliberately checks *passage-into-sentence* coverage, not the reverse, so a
@@ -392,6 +393,33 @@ SOP and may need tuning once a real (paraphrasing) LLM is in the loop.
 **Why this default:** 0.5 is generous enough that the template stub's own boilerplate wording
 never causes a false negative (see `tests/ai_content/test_summary_generator.py`), while still
 catching a sentence introducing content absent from every passage (T3.2).
+**Confirmed gap:** because coverage is checked in only one direction, a sentence containing 100% of
+a passage's words *plus an arbitrary amount of additional, unrelated content* is still scored as
+fully anchored -- the additional content is never checked against anything. Verified directly:
+```
+passages = (SourcePassage(field_name="skills", text="Python, SQL"),)
+sentence = ("The candidate is a Python SQL expert who was convicted of embezzling money from a "
+            "previous employer and has 25 years managing nuclear reactors.")
+anchor_for(sentence, passages)  # -> "skills" (fully anchored, NOT dropped)
+```
+**Why this isn't patched with a reverse-direction/bidirectional threshold:** it looks like an easy
+fix (also require some fraction of the *sentence's* tokens to come from the passage), but measured
+against real phrasing this doesn't actually separate the fabrication from legitimate content. A
+reasonable, non-hallucinated LLM paraphrase of the same "Python, SQL" passage --
+*"The candidate demonstrates strong proficiency in Python and SQL, reflecting solid technical
+skills applicable to backend development roles"* -- has a sentence-token coverage ratio of **0.14**.
+The fabricated example above measures **0.125** -- nearly indistinguishable from the legitimate
+sentence by this metric. A threshold loose enough to admit normal paraphrasing barely blocks the
+attack; a threshold tight enough to reliably block it would also reject legitimate LLM output,
+defeating the summary feature entirely. Word-overlap counting cannot tell "descriptive filler" and
+"fabricated fact" apart -- both are just "words absent from the passage." A real fix needs semantic
+verification (e.g. an NLI/entailment check, or a second LLM call asking "is this sentence entailed
+by this passage") that this stub does not implement, the same category of gap as malware scanning
+or the retention scheduler elsewhere in this file: a real-infrastructure problem, not a tunable
+constant. **Currently low live-impact** only because `TemplateLLMProvider` (the only wired-in
+provider) never fabricates content in the first place -- this is exactly the check a real LLM
+provider would need to lean on once one is plugged in (`llm_provider.py`'s vendor choice is still
+open), and today it would not catch the failure mode above.
 
 ## AI-Assisted Content Generation: hallucination-rate suspension threshold
 
@@ -520,6 +548,107 @@ scoring_engine," citing md/prompt.md §2 invariant 1. Invariant 1 is actually on
 — reading an existing `Score` for interview-question targeting is expected and required by
 module-3 doc's own Dependencies section. Corrected the docstring to state the real (one-way)
 constraint and pointed it at `tests/test_architectural_invariants.py`, which enforces it.
+
+## Security review (2026-07-22): two real vulnerabilities found and fixed
+
+**1. The JRP editor's Streamlit server bound every network interface by default, unauthenticated.**
+`streamlit run` with no `--server.address` binds all interfaces, not just localhost -- confirmed
+directly: its own startup banner printed a LAN "Network URL" and a public "External URL" alongside
+the local one. `jrp_editor/app.py`'s "Load"/"Save YAML" fields take an arbitrary filesystem path
+with no login in front of them, so the default would have let anyone who could reach the port (LAN,
+or the internet if it's forwarded) read or write any file the process can access, with no
+authentication at all -- effectively a remote arbitrary file read/write primitive bolted onto a
+form meant for one HR user on one machine. **Fixed:** `launcher.py` now passes `--server.address
+127.0.0.1` explicitly; re-ran the same startup check afterward and only the loopback URL is printed.
+**Residual risk:** this only prevents *accidental* exposure from the default. If this tool is ever
+meant to be reachable by more than one trusted local user, it needs real authentication and path
+confinement (e.g. restricting Load/Save to a configured directory) added first -- neither exists
+today.
+
+**2. A resume submitted as an oversized image crashed the entire intake batch, unhandled.**
+`ocr.py`'s `extract_text()` only caught `UnidentifiedImageError` around `Image.open()`. A crafted
+image whose header declares far more pixels than its actual data backs up (reproduced with a PNG
+declaring 60000x60000 dimensions but one truncated scanline of real data) makes Pillow raise
+`DecompressionBombError` instead, which propagated uncaught through `pdf_text.py` and
+`gateway.py`'s `run_once()` (no per-submission try/except exists there) and crashed the whole
+ingestion run -- not just that one candidate's processing. Resume input is already treated as
+adversarial elsewhere in this module (`injection_screening.py`'s hidden-text/instruction-pattern
+defenses); this was the same threat model with an image-based angle left uncovered. **Fixed:**
+`extract_text()` now also catches `Image.DecompressionBombError` and routes it through the same
+"unparseable, route to manual review" path every other malformed file already takes -- no new
+behavior, just closing a gap in existing handling. Regression test:
+`tests/intake_extraction/test_ocr.py::test_decompression_bomb_image_is_unparseable_not_a_crash`
+(a fixture builds the oversized-header PNG directly via raw chunk bytes, since actually rendering a
+60000x60000 image with Pillow to test this would itself exhaust memory).
+
+## Security + logic review, round 2 (2026-07-22): seven more real bugs found and fixed
+
+Three parallel reviews (intake/CLI/JRP-editor, scoring engine, AI-content/fairness) each verified
+their findings by actually running the real code before reporting them. All seven below were
+independently reproduced again here before fixing. One additional finding (anchoring.py's
+one-directional coverage check) is written up separately above, since it's a demonstrated gap that
+is deliberately *not* code-patched -- see that entry for why.
+
+**1. (High) One bad submission could crash the entire intake batch, silently dropping everything
+queued after it.** `IngestionGateway.run_once()`/`_process_submission` (`gateway.py`) had no
+exception boundary beyond the specific cases it already checks for (unparseable, injection, low
+confidence, ambiguous identity) -- anything else escaping, e.g. a corrupted PDF making pypdf raise
+something other than `PyPdfError`, propagated out of `run_once()` uncaught. **Fixed:** added a
+`QueueReason.PROCESSING_ERROR` and wrapped the per-submission call in `run_once()` in a
+`try/except Exception`, routing anything unexpected to manual review the same way every known
+failure mode already is, instead of aborting the batch. Regression tests in
+`tests/intake_extraction/test_gateway.py` cover both the crash-prevention itself and that the rest
+of the batch still processes after one bad submission.
+
+**2. (High) Resume files with an uppercase/mixed-case extension were silently never picked up at
+all.** `channel_adapters.py`'s `LocalFolderChannelAdapter` matched files via `Path.glob("*.pdf")`-
+style patterns, whose case sensitivity follows the OS (case-insensitive on Windows, case-sensitive
+on the Linux this would actually deploy to) -- a real-world `Resume.PDF` or scanner output like
+`SCAN0001.PDF` would never be read, queued to manual review, or logged anywhere on a case-sensitive
+filesystem: a silent, un-audited candidate loss, worse than routing to manual review because there's
+no trace it happened. **Fixed:** match via `Path.suffix.lower()` against a fixed extension set
+instead of OS-dependent glob patterns.
+
+**3. (Medium) A TOCTOU race between listing a folder and reading each file could crash the whole
+fetch.** Same file, between building the list of new paths and reading each one's bytes -- a file
+deleted/moved in that window (a concurrent cleanup job, a flaky network share) raised an uncaught
+`FileNotFoundError`, losing every other file in that fetch too, not just the one that vanished.
+**Fixed:** `read_bytes()` per file is now wrapped in `try/except OSError`, skipping just that file.
+
+**4. (High) A malformed `minimum_years` in a JRP YAML parsed successfully and only crashed later,
+mid-scoring.** `MustHaveCriterion.__post_init__` (`models.py`) checked only that
+`minimum_years is not None`, never that it was numeric -- `minimum_years: five` passed
+`load_jrp_from_yaml` with no error, then crashed every subsequent `engine.score()` call with
+`TypeError: '>=' not supported between instances of 'int' and 'str'`. **Fixed:** now validates
+`minimum_years` is a non-bool `int`/`float` and non-negative, raising the documented
+`JRPConfigError` at load time instead of crashing later in the scoring hot path.
+
+**5. (High) A malformed `tier_thresholds` in a JRP YAML raised an uncaught `AttributeError` instead
+of a clean `JRPConfigError`.** `_parse_tier_thresholds` (`jrp_config.py`) called `.get(...)`
+assuming its argument was always a mapping -- a YAML list there (`tier_thresholds: [1, 2, 3]`)
+broke that assumption. **Fixed:** validates the value is a mapping first, raising `JRPConfigError`.
+
+**6. (Medium-High) A scalar `required_skills` in a JRP YAML silently produced wrong, single-letter
+"skills" with no error at all.** `_parse_weighted_criterion` (`jrp_config.py`) called
+`tuple(required_skills)` on whatever was there -- if HR wrote `required_skills: Python` (forgetting
+the `[...]`), Python's `tuple()` iterates the string's characters, silently becoming
+`('P', 'y', 't', 'h', 'o', 'n')`. Verified this tanks the `mandatory_skills` dimension (a candidate
+who should score 100 scored 60) with no diagnostic anywhere. **Fixed:** now validates
+`required_skills` is a list/tuple when present, raising `JRPConfigError` instead.
+
+**7. (Medium) Overlapping/concurrent job date ranges were double-counted or misread as a gap.**
+Both `profile_adapter.py`'s `years_of_experience` fallback (summing each `YYYY-YYYY` range's own
+length) and `red_flags.py`'s `_detect_employment_gap` (checking adjacent ranges after sorting) only
+looked at raw, unmerged ranges. A candidate with a continuous 2015-2020 role plus two shorter
+concurrent engagements inside it got `8.0` years credited instead of the correct `5.0`
+(profile_adapter), and a spurious "gap between 2017 and 2018" flag despite being continuously
+employed the whole time (red_flags) -- verified both independently. A separate, related bug in the
+same code: neither file validated a parsed range's `start <= end`, so a single typo'd/reversed date
+(`"2020-2015"`, plausible from OCR or a typing slip) could be sorted ahead of a later correct range
+and fabricate a multi-year gap around it. **Fixed:** both files now filter out `end < start` ranges
+before use, and both now merge overlapping ranges (a small interval-merge helper, duplicated in each
+file rather than shared -- see the existing "duplicated year-range regex" entry above for why these
+two modules stay decoupled from each other) before summing/scanning for gaps.
 
 ## What this draft does NOT cover yet
 

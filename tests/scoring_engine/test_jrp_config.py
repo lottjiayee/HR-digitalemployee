@@ -182,3 +182,49 @@ def test_weight_still_sums_to_100_after_parsing() -> None:
     jrp = _parse(FULL_CONFIG)
     assert sum(c.weight for c in jrp.weighted_criteria) == 100.0
     assert jrp.tier_thresholds.classify(90.0) is Tier.HIGH_MATCH
+
+
+def test_non_numeric_minimum_years_raises_jrp_config_error_not_a_later_crash() -> None:
+    # Regression: this used to parse successfully (no JRPConfigError) and only crash later, mid-
+    # scoring, with a TypeError comparing int >= str inside engine.py -- caught here instead.
+    config = FULL_CONFIG.replace(
+        "  - kind: required_skill\n    label: Must know Python\n    required_skill: Python\n",
+        "  - kind: minimum_years_experience\n    label: Must have experience\n"
+        "    minimum_years: five\n",
+    )
+
+    with pytest.raises(JRPConfigError):
+        _parse(config)
+
+
+def test_negative_minimum_years_raises_jrp_config_error() -> None:
+    config = FULL_CONFIG.replace(
+        "  - kind: required_skill\n    label: Must know Python\n    required_skill: Python\n",
+        "  - kind: minimum_years_experience\n    label: Must have experience\n"
+        "    minimum_years: -5\n",
+    )
+
+    with pytest.raises(JRPConfigError):
+        _parse(config)
+
+
+def test_non_mapping_tier_thresholds_raises_jrp_config_error_not_a_later_crash() -> None:
+    # Regression: _parse_tier_thresholds assumed a mapping and called .get() on it unconditionally
+    # -- a YAML list here raised an uncaught AttributeError instead of a clean JRPConfigError.
+    config = FULL_CONFIG.replace(
+        "tier_thresholds:\n  high_match_min: 85\n  mid_match_min: 65\n",
+        "tier_thresholds: [1, 2, 3]\n",
+    )
+
+    with pytest.raises(JRPConfigError):
+        _parse(config)
+
+
+def test_scalar_required_skills_raises_jrp_config_error_not_silent_char_splitting() -> None:
+    # Regression: a bare string here (HR forgetting the `[...]`) used to pass through `tuple(...)`
+    # silently as one-character "skills" ('P', 'y', 't', 'h', ...) instead of raising -- tanking
+    # the mandatory_skills score with no diagnostic surfaced at all.
+    config = FULL_CONFIG.replace("required_skills: [Python, SQL]", "required_skills: Python")
+
+    with pytest.raises(JRPConfigError, match="required_skills must be a list"):
+        _parse(config)

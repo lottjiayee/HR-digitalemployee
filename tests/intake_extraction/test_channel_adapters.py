@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hr_digital_employee.intake_extraction.channel_adapters import LocalFolderChannelAdapter
 from hr_digital_employee.intake_extraction.models import SubmissionChannel
 
@@ -59,3 +61,45 @@ def test_a_file_already_returned_is_not_returned_again_on_the_next_fetch(tmp_pat
     assert len(first) == 1
     assert len(second) == 1
     assert second[0].file_bytes == b"Skills:\nSQL\n"
+
+
+def test_uppercase_and_mixed_case_extensions_are_still_picked_up(tmp_path: Path) -> None:
+    # Regression: matching via Path.glob("*.pdf")-style patterns follows the OS's case
+    # sensitivity (case-insensitive on Windows, case-sensitive on the Linux this would actually
+    # deploy to) -- a real-world "Resume.PDF" or scanner output like "SCAN0001.PDF" would silently
+    # never be picked up at all on a case-sensitive filesystem: not read, not queued to manual
+    # review, not logged anywhere.
+    (tmp_path / "Resume.PDF").write_bytes(b"Skills:\nPython\n")
+    (tmp_path / "SCAN0001.JPG").write_bytes(b"fake-jpeg-bytes")
+
+    adapter = LocalFolderChannelAdapter(tmp_path)
+    submissions = adapter.fetch_new_submissions()
+
+    assert {s.file_bytes for s in submissions} == {b"Skills:\nPython\n", b"fake-jpeg-bytes"}
+
+
+def test_a_file_deleted_between_listing_and_reading_is_skipped_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: a TOCTOU race between listing the folder and reading each matched file (a
+    # concurrent cleanup job, a flaky network share, another process moving already-processed
+    # files) used to raise an uncaught FileNotFoundError out of fetch_new_submissions(), losing
+    # every other file in that same fetch, not just the one that vanished. Simulated by making
+    # read_bytes() fail for one specific already-listed file, the same shape as the real race
+    # (present during iterdir(), gone by the time it's actually read).
+    (tmp_path / "resume1.pdf").write_bytes(b"Skills:\nPython\n")
+    (tmp_path / "resume2.pdf").write_bytes(b"Skills:\nSQL\n")
+    adapter = LocalFolderChannelAdapter(tmp_path)
+    original_read_bytes = Path.read_bytes
+
+    def _flaky_read_bytes(self: Path) -> bytes:
+        if self.name == "resume1.pdf":
+            raise FileNotFoundError(f"{self} vanished")
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _flaky_read_bytes)
+
+    submissions = adapter.fetch_new_submissions()
+
+    assert len(submissions) == 1
+    assert submissions[0].file_bytes == b"Skills:\nSQL\n"
