@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from hr_digital_employee.intake_extraction.dedup import IdentityDedupService
 from hr_digital_employee.intake_extraction.models import (
+    Candidate,
     MatchOutcome,
     RawSubmission,
     SubmissionChannel,
@@ -62,3 +63,21 @@ def test_clearly_different_name_creates_new_profile() -> None:
 
     assert result.outcome is MatchOutcome.NEW_PROFILE
     assert len(service.known_candidates()) == 2
+
+
+def test_a_confident_match_wins_even_when_a_weaker_ambiguous_candidate_comes_first() -> None:
+    # Regression test: matching used to stop at the first candidate with *any* signal, so an
+    # unrelated candidate's weak name overlap could block a later, exact match from being found.
+    service = IdentityDedupService()
+    service._candidates.append(
+        Candidate(candidate_id="c1", email=None, phone=None, name="John Smyth")
+    )
+    service._candidates.append(
+        Candidate(candidate_id="c2", email="john@example.com", phone=None, name="John Smith")
+    )
+
+    result = service.match(_submission(name="John Smith"))
+
+    assert result.outcome is MatchOutcome.MERGED_INTO_EXISTING
+    assert result.candidate is not None
+    assert result.candidate.candidate_id == "c2"

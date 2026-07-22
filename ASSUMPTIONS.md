@@ -143,6 +143,14 @@ name tokens.
 **Why this default:** keeps `IdentityDedupService` fully testable and demonstrates the
 merge/ambiguous/new three-way outcome without pulling in a fuzzy-matching dependency before that
 choice is made deliberately.
+**Fixed 2026-07-22:** `IdentityDedupService.match()` used to return on the *first* existing
+candidate that produced any signal at all, in list order. With more than one known candidate, an
+unrelated person's coincidentally weak name overlap (checked first, landing in the ambiguous band)
+could block a later candidate's confident, exact match from ever being found — a real submission
+that should have merged into candidate #2 got wrongly flagged ambiguous because of a weak signal
+from candidate #1. Fixed by scanning every existing candidate and preferring any confident
+(`MERGED_INTO_EXISTING`) result over an ambiguous one, regardless of which came first; see
+`tests/intake_extraction/test_dedup.py::test_a_confident_match_wins_even_when_a_weaker_ambiguous_candidate_comes_first`.
 
 ## Audit log persistence
 

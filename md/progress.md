@@ -33,7 +33,7 @@ in-memory and a SQLite-backed implementation (the latter survives a process rest
 temporary/local-only bridge, not the real deployment data store — see ASSUMPTIONS.md). Modules 1
 and 2 are now connected end to end: `tests/integration/test_intake_to_scoring_pipeline.py` runs a
 real resume through `IngestionGateway.run_once()` and into `ScoringEngine.score()` and checks a real
-`Score` comes out, not just hand-built `CandidateProfile` fixtures. 121 tests, mypy --strict / ruff
+`Score` comes out, not just hand-built `CandidateProfile` fixtures. 122 tests, mypy --strict / ruff
 / ruff format all pass (OCR tests skip gracefully on a machine without the Tesseract binary). See
 `ASSUMPTIONS.md` at the repo root for every stub this draft makes — including an observed,
 non-theoretical accuracy tradeoff for local OCR vs. a managed cloud provider. Modules 3–6 are empty

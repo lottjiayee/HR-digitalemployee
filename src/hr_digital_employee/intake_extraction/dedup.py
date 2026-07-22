@@ -42,10 +42,20 @@ class IdentityDedupService:
         return list(self._candidates)
 
     def match(self, submission: RawSubmission) -> IdentityMatchResult:
+        # Scan every existing candidate rather than stopping at the first signal found -- a
+        # confident match against candidate #2 must win even if candidate #1 only produced a weak,
+        # ambiguous signal (SOP 2.1.3: never let a coincidental near-miss block a real match).
+        ambiguous_result: IdentityMatchResult | None = None
         for existing in self._candidates:
             result = self._compare(submission, existing)
-            if result is not None:
+            if result is None:
+                continue
+            if result.outcome is MatchOutcome.MERGED_INTO_EXISTING:
                 return result
+            if ambiguous_result is None:
+                ambiguous_result = result
+        if ambiguous_result is not None:
+            return ambiguous_result
 
         new_candidate = Candidate(
             candidate_id=str(uuid.uuid4()),
