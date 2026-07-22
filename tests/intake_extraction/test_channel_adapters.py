@@ -31,6 +31,17 @@ def test_reads_image_files_from_folder(tmp_path: Path) -> None:
     assert {s.file_bytes for s in submissions} == {b"fake-jpeg-bytes", b"fake-png-bytes"}
 
 
+def test_candidate_name_falls_back_to_the_filename_stem(tmp_path: Path) -> None:
+    (tmp_path / "jane_doe_resume.pdf").write_bytes(b"Skills:\nPython\n")
+
+    adapter = LocalFolderChannelAdapter(tmp_path)
+    submissions = adapter.fetch_new_submissions()
+
+    assert submissions[0].candidate_name == "jane_doe_resume"
+    assert submissions[0].candidate_email is None
+    assert submissions[0].candidate_phone is None
+
+
 def test_missing_folder_returns_empty_list(tmp_path: Path) -> None:
     adapter = LocalFolderChannelAdapter(tmp_path / "does_not_exist")
 

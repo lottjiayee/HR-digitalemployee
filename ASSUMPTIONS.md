@@ -22,6 +22,11 @@ the folder on every call, contradicting this section's own contract ("each new i
 fetch") -- calling `IngestionGateway.run_once()` on a loop (its only realistic usage) would
 reprocess the same resumes forever. Now tracks already-returned paths in memory per adapter
 instance, matching the cursor-like semantics a real Email/Teams adapter would use.
+**Fixed 2026-07-22:** `candidate_name` was hardcoded to `None` for every local-folder submission --
+harmless until `cli.py` (below) needed something human-readable to print per candidate and got a
+meaningless UUID (`candidate_id`) instead. A real Email/Teams adapter reads the name from the
+message envelope; this stub has no envelope, so it now falls back to the filename (minus
+extension) as the closest available identifier.
 
 ## PDF byte-to-text extraction
 
@@ -307,14 +312,36 @@ hiring-round/Application entity to enforce "one version" against, a live metrics
 NFR-6) — not meaningfully fakeable as pure scoring logic. Left as an explicit gap for the next
 build pass.
 
+## A command-line bridge, not Module 5's real JRP-config UI/dashboard
+
+**Status:** Temporary -- Module 5 (Presentation Layer, design.md §3.8) owns the real JRP
+configuration UI and candidate dashboard, and hasn't been started
+**What was built:** `scoring_engine/jrp_config.py` (`load_jrp_from_yaml()`/`parse_jrp_config()`)
+reads a JRP from a human-editable YAML file instead of requiring hand-written Python
+`JRP`/`WeightedCriterion`/`MustHaveCriterion` objects -- weights may be omitted per criterion to
+fall back to the selected `weight_template`'s preset. `cli.py` (registered as the
+`hr-digital-employee` console script, see `pyproject.toml`) wires the whole pipeline together:
+point it at a folder of resumes and a JRP YAML file, and it runs intake -> extraction -> the
+profile adapter -> scoring for every resume and prints a ranked report, with a `--audit-db` flag to
+persist the run's audit trail to a `SqliteAuditLog` file.
+**What a real implementation must satisfy:** design.md §3.8 -- a proper web dashboard (pipeline
+overview, filtering, candidate drill-down, comparison tables) and a JRP configuration UI, with the
+explicit HR Pass/Reject action (FR-14) that this CLI does not and should not implement (a
+command-line tool has no business being the place a candidate's status changes).
+**Why this default:** makes the two already-built modules usable by *someone* right now -- editing
+a YAML file and running one command -- without prematurely deciding the frontend framework
+question design.md §10.4 leaves open, and without building a backend API server (none exists in
+this codebase yet) just to serve a UI that isn't designed yet either.
+
 ## What this draft does NOT cover yet
 
 This is a rough first draft of Wave 1 (Module 1: Intake & Extraction, the minimum of Module 7:
 Governance & Audit needed for Module 1 to log through it) plus a draft of Module 2: Scoring Engine
 (must-have gating, weighted/curve-adjusted dimension scoring, tier classification, JRP versioning +
-audit logging — all deterministic, no LLM/agent input anywhere in the module, per FR-9). **Not yet
-built:** manual-review SLA monitoring/alerting, incident routing, weekly operational review, Talent
-Pool Store, Candidate Feedback storage, the Module 1 -> Module 2 profile adapter, one-round-one-
-version enforcement, the NFR-6 rollback hook, and Modules 3 through 6 entirely (empty placeholder
-packages only, per `md/prompt.md` §5's repository layout). See `md/progress.md` for the
-authoritative checklist.
+audit logging — all deterministic, no LLM/agent input anywhere in the module, per FR-9), plus a
+YAML-config JRP loader and a command-line bridge (`hr-digital-employee`) tying the two modules
+together end to end. **Not yet built:** manual-review SLA monitoring/alerting, incident routing,
+weekly operational review, Talent Pool Store, Candidate Feedback storage, one-round-one-version
+enforcement, the NFR-6 rollback hook, any real web UI/dashboard/API server (Module 5), and Modules
+3, 4, and 6 entirely (empty placeholder packages only, per `md/prompt.md` §5's repository layout).
+See `md/progress.md` for the authoritative checklist.

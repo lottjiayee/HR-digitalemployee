@@ -33,11 +33,20 @@ in-memory and a SQLite-backed implementation (the latter survives a process rest
 temporary/local-only bridge, not the real deployment data store — see ASSUMPTIONS.md). Modules 1
 and 2 are now connected end to end: `tests/integration/test_intake_to_scoring_pipeline.py` runs a
 real resume through `IngestionGateway.run_once()` and into `ScoringEngine.score()` and checks a real
-`Score` comes out, not just hand-built `CandidateProfile` fixtures. 122 tests, mypy --strict / ruff
-/ ruff format all pass (OCR tests skip gracefully on a machine without the Tesseract binary). See
-`ASSUMPTIONS.md` at the repo root for every stub this draft makes — including an observed,
-non-theoretical accuracy tradeoff for local OCR vs. a managed cloud provider. Modules 3–6 are empty
-placeholder packages only.
+`Score` comes out, not just hand-built `CandidateProfile` fixtures.
+
+There is now also a way to actually *run* this rather than only read its tests: `scoring_engine/
+jrp_config.py` loads a JRP from a YAML file (weights can be omitted per-criterion to fall back to
+the chosen weight template's preset), and the `hr-digital-employee` console script (`cli.py`,
+registered in `pyproject.toml`) points at a resumes folder + a JRP YAML file and prints a ranked
+scoring report end to end. This is a temporary command-line bridge, not Module 5's real dashboard/
+JRP-config UI (still Not Started) — see ASSUMPTIONS.md.
+
+142 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
+without the Tesseract binary). See `ASSUMPTIONS.md` at the repo root for every stub this draft
+makes — including an observed, non-theoretical accuracy tradeoff for local OCR vs. a managed cloud
+provider. Modules 3, 4, and 6 are empty placeholder packages only; Module 5 has this CLI as a
+temporary stand-in for its real UI.
 
 **2026-07-21 code-review pass:** found and fixed two gateway-level correctness bugs (not stubs —
 actual defects) via a Standards/Spec code review against design.md/FR-3: (1) a resume whose Skills
@@ -131,6 +140,8 @@ named person to exist), but the system should not go live until they're resolved
 - [x] Scoring-engine version stamping — every `Score` carries both `scoring_engine_version` and `parser_version` (NFR-5), plus an audit-logged warning (not a hard block) if a JRP's Educational Level weight exceeds the 15% guideline default (module-2 doc §4)
 - [ ] One-round-one-version enforcement — not started, needs a hiring-round/Application entity
 - [ ] Rollback trigger hook — not started, needs a live metrics feed (NFR-6)
+- [x] YAML-based JRP config loader (`scoring_engine/jrp_config.py`) — HR-editable stand-in for
+      Module 5's real JRP configuration UI (still Not Started); see ASSUMPTIONS.md
 - [x] Module 1 -> Module 2 profile adapter — `profile_adapter.build_candidate_profile()` maps
       `ExtractedResume` -> `CandidateProfile` via regex heuristics (year-phrase/year-range parsing,
       a degree-keyword table); `tests/integration/test_intake_to_scoring_pipeline.py` proves a real
@@ -170,6 +181,11 @@ named person to exist), but the system should not go live until they're resolved
 - [ ] Feedback-to-scoring gate (blocks Module 7 feedback reaching Module 2 without re-test)
 
 ## 7. Module 5 — Presentation Layer
+
+None of this module itself is built yet. `cli.py`'s `hr-digital-employee` console script is a
+temporary, separate command-line bridge over Modules 1+2 (a ranked-report printout, no dashboard,
+no Pass/Reject action) — useful for running the pipeline at all right now, but not a substitute for
+any item below. See ASSUMPTIONS.md.
 
 - [ ] Notification cards (Email, Teams)
 - [ ] Comparison table

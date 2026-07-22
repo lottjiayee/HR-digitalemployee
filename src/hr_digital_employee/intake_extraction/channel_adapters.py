@@ -53,7 +53,11 @@ class LocalFolderChannelAdapter:
                     channel=self._channel,
                     candidate_email=None,
                     candidate_phone=None,
-                    candidate_name=None,
+                    # A real Email/Teams adapter gets the candidate's name from the message
+                    # envelope; this stub has no envelope, so it falls back to the filename (minus
+                    # extension) as the closest available human-readable identifier -- otherwise
+                    # every submission is indistinguishable except by its generated candidate_id.
+                    candidate_name=file_path.stem,
                     file_bytes=file_path.read_bytes(),
                     received_at=datetime.now(UTC),
                 )
