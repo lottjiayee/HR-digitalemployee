@@ -32,7 +32,12 @@ class TextExtractionLog:
             f"candidate={submission.display_identifier}\n"
             f"{_SEPARATOR}\n"
         )
+        # `text` is untrusted (a candidate's own resume content) -- indenting every line keeps a
+        # line that happens to match the header format above (e.g. a resume containing its own
+        # 72-"="-character line, or literal "received_at=...  candidate=..." text) from being
+        # mistaken for a real entry boundary by anyone/anything scanning this file for headers.
+        indented_text = "\n".join(f"    {line}" for line in text.splitlines())
         with self._path.open("a", encoding="utf-8") as handle:
             handle.write(header)
-            handle.write(text)
+            handle.write(indented_text)
             handle.write("\n\n")

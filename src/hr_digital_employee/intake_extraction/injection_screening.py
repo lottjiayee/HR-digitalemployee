@@ -10,9 +10,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+_MAX_HIDDEN_SPAN = 300
+"""Caps how far the paired-color pattern below can look between its opening and closing color
+declaration. Without a bound, `.*?` with DOTALL matches between *any two* white-color CSS mentions
+anywhere in the whole document -- two unrelated, ordinary style attributes (e.g. a decorative
+header and a footer) would bridge everything in between and get stripped as "hidden text",
+destroying real resume content that was never actually hidden (see ASSUMPTIONS.md). A genuine
+hidden-instruction payload is realistically a sentence or two -- comfortably under this bound."""
+
 _HIDDEN_TEXT_PATTERNS = [
     re.compile(
-        r"color:\s*#?(?:fff+|ffffff)\s*;.*?color:\s*#?(?:fff+|ffffff)",
+        rf"color:\s*#?(?:fff+|ffffff)\s*;.{{0,{_MAX_HIDDEN_SPAN}}}?color:\s*#?(?:fff+|ffffff)",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(r"font-size:\s*0(?:\.\d+)?px[^\n]*", re.IGNORECASE),

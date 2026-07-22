@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from hr_digital_employee.jrp_editor.config_builder import (
@@ -36,8 +37,34 @@ st.caption(
     "ASSUMPTIONS.md."
 )
 
+def _apply_weighted_criteria_to_widget_state(rows: list[dict[str, Any]]) -> None:
+    """Writes each row's values directly into the *widgets' own* session_state keys.
+
+    Once a widget with a given `key=` has been instantiated, only `st.session_state[key]` -- not
+    a later `value=` argument passed on a subsequent rerun -- determines what it displays (this is
+    Streamlit's documented behavior, confirmed here via `AppTest`: a `value=` on an already-keyed
+    widget is silently ignored). Loading a file or switching weight templates must therefore write
+    these keys directly to actually change what's shown; just updating the plain
+    `st.session_state.weighted_criteria` list looked correct but never reached the widgets at all.
+    """
+    for row in rows:
+        dimension = row["dimension"]
+        st.session_state[f"weight_{dimension}"] = float(row["weight"])
+        st.session_state[f"curve_{dimension}"] = row["curve"]
+        if dimension == "mandatory_skills":
+            st.session_state[f"skills_{dimension}"] = ", ".join(row["required_skills"])
+        elif dimension == "experience_tenure":
+            st.session_state[f"years_{dimension}"] = float(row["required_years"] or 0.0)
+        elif dimension == "educational_level":
+            st.session_state[f"edu_{dimension}"] = row["required_education_level"] or "bachelor"
+        elif dimension == "project_relevance":
+            st.session_state[f"proj_{dimension}"] = int(row["required_project_count"] or 0)
+    st.session_state.weighted_criteria = rows
+
+
 if "weighted_criteria" not in st.session_state:
-    st.session_state.weighted_criteria = default_weighted_criteria(WeightTemplate.GENERAL)
+    _apply_weighted_criteria_to_widget_state(default_weighted_criteria(WeightTemplate.GENERAL))
+    st.session_state._applied_template = WeightTemplate.GENERAL.value
 if "must_have" not in st.session_state:
     st.session_state.must_have = []
 
@@ -58,30 +85,32 @@ with st.sidebar:
             st.session_state.version = loaded["version"]
             st.session_state.weight_template = loaded["weight_template"]
             st.session_state._applied_template = loaded["weight_template"]
-            st.session_state.weighted_criteria = loaded["weighted_criteria"]
+            _apply_weighted_criteria_to_widget_state(loaded["weighted_criteria"])
             st.session_state.must_have = loaded["must_have"]
             st.session_state.high_match_min = loaded["tier_thresholds"]["high_match_min"]
             st.session_state.mid_match_min = loaded["tier_thresholds"]["mid_match_min"]
             st.success(f"Loaded {loaded['jrp_id']} (v{loaded['version']})")
 
+if "jrp_id" not in st.session_state:
+    st.session_state.jrp_id = ""
+if "role_name" not in st.session_state:
+    st.session_state.role_name = ""
+if "version" not in st.session_state:
+    st.session_state.version = 1
+if "weight_template" not in st.session_state:
+    st.session_state.weight_template = WeightTemplate.GENERAL.value
+
 left, right = st.columns(2)
 with left:
-    jrp_id = st.text_input("JRP ID", value=st.session_state.get("jrp_id", ""))
-    role_name = st.text_input("Role name", value=st.session_state.get("role_name", ""))
+    jrp_id = st.text_input("JRP ID", key="jrp_id")
+    role_name = st.text_input("Role name", key="role_name")
 with right:
-    version = int(
-        st.number_input(
-            "Version", min_value=1, step=1, value=int(st.session_state.get("version", 1))
-        )
-    )
+    version = int(st.number_input("Version", min_value=1, step=1, key="version"))
     template_options = [t.value for t in WeightTemplate]
-    current_template = st.session_state.get("weight_template", WeightTemplate.GENERAL.value)
-    weight_template_value = st.selectbox(
-        "Weight template", template_options, index=template_options.index(current_template)
-    )
+    weight_template_value = st.selectbox("Weight template", template_options, key="weight_template")
     if weight_template_value != st.session_state.get("_applied_template"):
-        st.session_state.weighted_criteria = default_weighted_criteria(
-            WeightTemplate(weight_template_value)
+        _apply_weighted_criteria_to_widget_state(
+            default_weighted_criteria(WeightTemplate(weight_template_value))
         )
         st.session_state._applied_template = weight_template_value
         st.info(f"Weights reset to the {weight_template_value} template's defaults.")
@@ -98,47 +127,28 @@ for row in st.session_state.weighted_criteria:
     st.markdown(f"**{dimension.replace('_', ' ').title()}**")
     cols = st.columns(4)
     weight = cols[0].number_input(
-        "Weight",
-        min_value=0.0,
-        max_value=100.0,
-        value=float(row["weight"]),
-        key=f"weight_{dimension}",
+        "Weight", min_value=0.0, max_value=100.0, key=f"weight_{dimension}"
     )
-    curve = cols[1].selectbox(
-        "Curve", curve_options, index=curve_options.index(row["curve"]), key=f"curve_{dimension}"
-    )
+    curve = cols[1].selectbox("Curve", curve_options, key=f"curve_{dimension}")
     new_row = dict(row, weight=weight, curve=curve)
 
     if dimension == "mandatory_skills":
         skills_text = cols[2].text_input(
-            "Required skills (comma-separated)",
-            value=", ".join(row["required_skills"]),
-            key=f"skills_{dimension}",
+            "Required skills (comma-separated)", key=f"skills_{dimension}"
         )
         new_row["required_skills"] = [s.strip() for s in skills_text.split(",") if s.strip()]
     elif dimension == "experience_tenure":
         new_row["required_years"] = cols[2].number_input(
-            "Required years",
-            min_value=0.0,
-            value=float(row["required_years"] or 0.0),
-            key=f"years_{dimension}",
+            "Required years", min_value=0.0, key=f"years_{dimension}"
         )
     elif dimension == "educational_level":
-        current_edu = row["required_education_level"] or "bachelor"
         new_row["required_education_level"] = cols[2].selectbox(
-            "Required education level",
-            education_options,
-            index=education_options.index(current_edu),
-            key=f"edu_{dimension}",
+            "Required education level", education_options, key=f"edu_{dimension}"
         )
     elif dimension == "project_relevance":
         new_row["required_project_count"] = int(
             cols[2].number_input(
-                "Required project count",
-                min_value=0,
-                step=1,
-                value=int(row["required_project_count"] or 0),
-                key=f"proj_{dimension}",
+                "Required project count", min_value=0, step=1, key=f"proj_{dimension}"
             )
         )
     updated_rows.append(new_row)
@@ -158,27 +168,35 @@ for row in st.session_state.weighted_criteria:
             f"{EDUCATIONAL_LEVEL_WEIGHT_GUIDELINE_MAX}% guideline default (module-2 doc §4)."
         )
 
-st.subheader("Must-have criteria (pass/fail gates)")
-st.caption("A candidate failing any of these gets no score at all -- see module-2 doc §4.")
-edited_must_have = st.data_editor(
-    st.session_state.must_have,
+st.subheader("Must-have criteria (gating flags)")
+st.caption(
+    "A candidate failing any of these still gets a full weighted score -- the failure is flagged "
+    "alongside it for HR to review, never an auto-reject (SOP 2.2.2/2.2.4; module-2 doc §4)."
+)
+_MUST_HAVE_COLUMNS = ["kind", "label", "required_skill", "minimum_years"]
+must_have_df = pd.DataFrame(st.session_state.must_have, columns=_MUST_HAVE_COLUMNS)
+edited_must_have_df = st.data_editor(
+    must_have_df,
     num_rows="dynamic",
     column_config={
         "kind": st.column_config.SelectboxColumn(options=[k.value for k in MustHaveKind]),
     },
     key="must_have_editor",
 )
-st.session_state.must_have = list(edited_must_have)
+st.session_state.must_have = edited_must_have_df.to_dict("records")
+
+if "high_match_min" not in st.session_state:
+    st.session_state.high_match_min = 80.0
+if "mid_match_min" not in st.session_state:
+    st.session_state.mid_match_min = 60.0
 
 st.subheader("Tier thresholds (optional)")
 tier_cols = st.columns(2)
 high_match_min = tier_cols[0].number_input(
-    "High Match minimum", min_value=0.0, max_value=100.0,
-    value=float(st.session_state.get("high_match_min", 80.0)),
+    "High Match minimum", min_value=0.0, max_value=100.0, key="high_match_min"
 )
 mid_match_min = tier_cols[1].number_input(
-    "Mid Match minimum", min_value=0.0, max_value=100.0,
-    value=float(st.session_state.get("mid_match_min", 60.0)),
+    "Mid Match minimum", min_value=0.0, max_value=100.0, key="mid_match_min"
 )
 
 raw_config: dict[str, Any] = {

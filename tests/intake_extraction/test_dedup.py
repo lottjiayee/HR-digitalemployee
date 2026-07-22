@@ -67,17 +67,79 @@ def test_clearly_different_name_creates_new_profile() -> None:
 
 def test_a_confident_match_wins_even_when_a_weaker_ambiguous_candidate_comes_first() -> None:
     # Regression test: matching used to stop at the first candidate with *any* signal, so an
-    # unrelated candidate's weak name overlap could block a later, exact match from being found.
+    # unrelated candidate's weak name overlap could block a later, confident match from being
+    # found. Uses email (a hard identifier) for "confident" -- name alone is never confident
+    # enough to auto-merge, see the test below.
     service = IdentityDedupService()
     service._candidates.append(
         Candidate(candidate_id="c1", email=None, phone=None, name="John Smyth")
     )
     service._candidates.append(
-        Candidate(candidate_id="c2", email="john@example.com", phone=None, name="John Smith")
+        Candidate(candidate_id="c2", email="john@example.com", phone=None, name="Someone Else")
     )
 
-    result = service.match(_submission(name="John Smith"))
+    result = service.match(_submission(email="john@example.com", name="John Smith"))
 
     assert result.outcome is MatchOutcome.MERGED_INTO_EXISTING
     assert result.candidate is not None
     assert result.candidate.candidate_id == "c2"
+
+
+def test_an_exact_name_match_with_no_corroborating_email_or_phone_is_ambiguous_not_merged() -> (
+    None
+):
+    # Regression: an *exact* full-name match with no other signal used to auto-merge outright --
+    # a name isn't a unique identifier, and two different real people can share one common name
+    # with no way to tell them apart from name alone. Must go to a human, never auto-merge.
+    service = IdentityDedupService()
+    service.match(_submission(name="John Smith"))  # no email/phone, e.g. a WhatsApp submission
+
+    result = service.match(_submission(name="John Smith"))  # a *different* real person
+
+    assert result.outcome is MatchOutcome.AMBIGUOUS
+    assert len(service.known_candidates()) == 1
+
+
+def test_email_matching_is_case_insensitive() -> None:
+    # Regression: a case-only difference (e.g. resubmitting via a channel that capitalizes
+    # differently) used to be treated as a different email entirely, silently splitting one real
+    # person into two separate candidate profiles.
+    service = IdentityDedupService()
+    first = service.match(_submission(email="Elizabeth.Windsor@Example.com", name="Liz W"))
+    second = service.match(_submission(email="elizabeth.windsor@example.com", name="Elizabeth W"))
+
+    assert second.outcome is MatchOutcome.MERGED_INTO_EXISTING
+    assert second.candidate is not None
+    assert first.candidate is not None
+    assert second.candidate.candidate_id == first.candidate.candidate_id
+
+
+def test_phone_matching_ignores_common_formatting_differences() -> None:
+    service = IdentityDedupService()
+    first = service.match(_submission(phone="+1 (555) 123-4567", name="Jane Doe"))
+    second = service.match(_submission(phone="15551234567", name="Jane Doe"))
+
+    assert second.outcome is MatchOutcome.MERGED_INTO_EXISTING
+    assert second.candidate is not None
+    assert first.candidate is not None
+    assert second.candidate.candidate_id == first.candidate.candidate_id
+
+
+def test_two_different_people_with_punctuation_only_phones_are_not_merged() -> None:
+    # Regression: the truthiness guard checked the RAW phone/email string was non-empty, then
+    # compared NORMALIZED values -- so two different non-empty raw values that both normalize to
+    # "" (e.g. placeholder punctuation with no digits) compared equal and silently auto-merged two
+    # unrelated people.
+    service = IdentityDedupService()
+    service.match(_submission(phone="--", name="Alice Anderson"))
+    second = service.match(_submission(phone="()", name="Bob Baker"))
+
+    assert second.outcome is not MatchOutcome.MERGED_INTO_EXISTING
+
+
+def test_two_different_people_with_whitespace_only_emails_are_not_merged() -> None:
+    service = IdentityDedupService()
+    service.match(_submission(email="   ", name="Alice Anderson"))
+    second = service.match(_submission(email="\t", name="Bob Baker"))
+
+    assert second.outcome is not MatchOutcome.MERGED_INTO_EXISTING

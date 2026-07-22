@@ -56,6 +56,11 @@ module = "streamlit"
 ignore_missing_imports = true
 follow_imports = "skip"
 
+[[tool.mypy.overrides]]
+module = "pandas"
+ignore_missing_imports = true
+follow_imports = "skip"
+
 
 [tool.ruff]
 line-length = 100

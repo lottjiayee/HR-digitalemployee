@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hr_digital_employee.scoring_engine.skill_ontology import (
     IdentitySkillOntology,
     SynonymMapSkillOntology,
@@ -12,6 +14,16 @@ def test_identity_ontology_matches_exact_case_and_whitespace_insensitive() -> No
     ontology = IdentitySkillOntology()
 
     assert ontology.resolves_same_skill("Python", " python ") is True
+
+
+def test_identity_ontology_is_insensitive_to_internal_whitespace_too() -> None:
+    # Regression: .strip() alone only trims the ends, so "Team  Leadership" (doubled internal
+    # space) was wrongly treated as different from "Team Leadership" despite the class's own
+    # docstring claiming whitespace-insensitivity -- a plausible false-negative must-have
+    # rejection for real, irregularly-spaced OCR/PDF-extracted resume text.
+    ontology = IdentitySkillOntology()
+
+    assert ontology.resolves_same_skill("Team  Leadership", "Team Leadership") is True
 
 
 def test_identity_ontology_does_not_resolve_different_phrasings() -> None:
@@ -31,3 +43,12 @@ def test_synonym_map_ontology_still_matches_terms_outside_any_group_exactly() ->
 
     assert ontology.resolves_same_skill("Python", "Python") is True
     assert ontology.resolves_same_skill("Python", "SQL") is False
+
+
+def test_synonym_map_ontology_rejects_a_group_that_overlaps_an_earlier_one() -> None:
+    # Regression: a later group sharing a term with an earlier one used to silently overwrite
+    # that term's mapping, breaking the earlier group's synonymy with no error at all --
+    # building ("Java","JVM") then ("JavaScript","JS","JVM") used to make "Java"/"JVM" stop
+    # resolving as the same skill, silently, the moment the second group was added.
+    with pytest.raises(ValueError, match="already mapped"):
+        SynonymMapSkillOntology([("Java", "JVM"), ("JavaScript", "JS", "JVM")])

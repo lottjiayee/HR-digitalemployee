@@ -9,6 +9,7 @@ real dashboard/JRP-configuration UI (not built yet -- see ASSUMPTIONS.md). Run a
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -93,13 +94,26 @@ def _print_report(
     print()
 
     if results:
-        print(f"{'Candidate':<30} {'Score':>7}  {'Tier':<12} Must-have")
+        print(f"{'Candidate':<30} {'Score':>7}  {'Tier':<13} Must-have")
         print("-" * 70)
-        for label, score in results:
-            must_have = (
-                "pass" if score.passed_must_have else f"FAIL: {score.failed_must_have_label}"
-            )
-            print(f"{label:<30} {score.total_score:>7.1f}  {score.tier.value:<12} {must_have}")
+        for raw_label, score in results:
+            # Candidate-supplied (untrusted): a newline would otherwise forge what looks like a
+            # second, standalone row in the printed table.
+            label = raw_label.replace("\n", " ").replace("\r", " ")
+            if score.passed_must_have:
+                must_have = "pass"
+                tier_display = score.tier.value
+            else:
+                must_have = f"FAIL: {'; '.join(score.failed_must_have_labels)}"
+                tier_display = f"{score.tier.value}*"
+            # Two decimals, not one: `engine.py` already rounds `total_score` to 2 places, and a
+            # value like 79.95 displayed at 1 decimal ("80.0") sits right next to its correctly-
+            # classified "mid_match" tier looking like a tier-classification bug on a skim.
+            print(f"{label:<30} {score.total_score:>7.2f}  {tier_display:<13} {must_have}")
+        if any(not score.passed_must_have for _, score in results):
+            print()
+            print("* must-have requirement(s) not met -- see Must-have column; HR reviews before")
+            print("  advancing (score/tier shown per SOP 2.2.2/2.2.4, never auto-rejected).")
 
     if len(manual_review_queue) > 0:
         print()
@@ -109,6 +123,12 @@ def _print_report(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # A candidate name/label containing CJK characters or an emoji otherwise crashes the whole
+    # report with `UnicodeEncodeError` under a legacy (e.g. Windows cp1252) console encoding --
+    # replacing what can't be displayed keeps the report printing instead of aborting the batch.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+
     args = build_argument_parser().parse_args(argv)
 
     try:
@@ -117,10 +137,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error loading JRP config: {error}", file=sys.stderr)
         return 1
 
-    audit_log: AuditLog = SqliteAuditLog(args.audit_db) if args.audit_db else InMemoryAuditLog()
-    text_log = TextExtractionLog(args.text_log) if args.text_log else None
+    try:
+        audit_log: AuditLog = SqliteAuditLog(args.audit_db) if args.audit_db else InMemoryAuditLog()
+        text_log = TextExtractionLog(args.text_log) if args.text_log else None
 
-    results, manual_review_queue = run(args.resumes, jrp, audit_log, text_log)
+        results, manual_review_queue = run(args.resumes, jrp, audit_log, text_log)
+    except sqlite3.Error as error:
+        # Two distinct failure shapes, both from --audit-db pointing at something incompatible:
+        # a path that exists but isn't a SQLite file at all (fails immediately, constructing
+        # SqliteAuditLog), or a SQLite file whose audit_events table doesn't have this schema
+        # (CREATE TABLE IF NOT EXISTS no-ops silently, so this only surfaces on the first actual
+        # record() call, mid-pipeline). Either way, a raw traceback isn't an actionable message.
+        print(f"Error using --audit-db {args.audit_db}: {error}", file=sys.stderr)
+        return 1
+
     _print_report(jrp, results, manual_review_queue)
     return 0
 

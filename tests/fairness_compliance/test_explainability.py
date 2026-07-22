@@ -70,7 +70,9 @@ def test_t4_11_explanation_is_derived_from_the_existing_score_only() -> None:
     assert len(explanation.dimension_explanations) == 4
 
 
-def test_explanation_for_a_candidate_who_failed_a_must_have_names_the_reason() -> None:
+def test_explanation_for_a_must_have_failure_names_the_reason_alongside_the_score() -> None:
+    # SOP 2.2.2/2.2.4 (2026-07-22 revision): a failed must-have is noted alongside the full score,
+    # not in place of it -- the candidate still sees the complete basis for their result.
     profile = CandidateProfile(
         skills=("SQL",),  # missing the must-have Python
         years_of_experience=5.0,
@@ -82,4 +84,5 @@ def test_explanation_for_a_candidate_who_failed_a_must_have_names_the_reason() -
     explanation = explain_score(score, _JRP)
 
     assert "Must know Python" in explanation.summary
-    assert explanation.dimension_explanations == ()
+    assert "80.0" in explanation.summary
+    assert len(explanation.dimension_explanations) == 4

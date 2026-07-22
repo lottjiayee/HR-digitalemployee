@@ -56,7 +56,9 @@ _GENERAL_JRP = JRP(
 )
 
 
-def test_t2_3_candidate_failing_must_have_is_forced_to_low_match_with_no_weighted_score() -> None:
+def test_t2_3_candidate_failing_must_have_is_flagged_alongside_a_full_weighted_score() -> None:
+    # SOP 2.2.2/2.2.4 (2026-07-22 revision): a failed must-have no longer withholds the score --
+    # it's flagged alongside a fully-computed score/breakdown so HR sees the whole profile.
     profile = CandidateProfile(
         skills=("SQL",),  # missing the must-have "Python"
         years_of_experience=8.0,
@@ -67,10 +69,52 @@ def test_t2_3_candidate_failing_must_have_is_forced_to_low_match_with_no_weighte
     score = ScoringEngine().score(profile, _GENERAL_JRP, parser_version="stub-0.1.0")
 
     assert score.passed_must_have is False
-    assert score.failed_must_have_label == "Must know Python"
-    assert score.tier is Tier.LOW_MATCH
-    assert score.total_score == 0.0
-    assert score.breakdown == ()
+    assert score.failed_must_have_labels == ("Must know Python",)
+    assert score.total_score == 80.0
+    assert len(score.breakdown) == 4
+
+
+def test_a_candidate_failing_multiple_must_haves_has_every_one_named_not_just_the_first() -> None:
+    # Regression: `failed_must_have_label` (singular) only ever surfaced the FIRST failing
+    # must-have, silently hiding the rest -- directly contradicting the 2026-07-22 SOP revision's
+    # own stated purpose of showing HR the full profile before deciding.
+    jrp = JRP(
+        jrp_id="role-2",
+        role_name="Platform Engineer",
+        version=1,
+        weight_template=WeightTemplate.GENERAL,
+        must_have_criteria=(
+            MustHaveCriterion(
+                kind=MustHaveKind.REQUIRED_SKILL, label="Must know Python", required_skill="Python"
+            ),
+            MustHaveCriterion(
+                kind=MustHaveKind.REQUIRED_SKILL,
+                label="Must know Kubernetes",
+                required_skill="Kubernetes",
+            ),
+            MustHaveCriterion(
+                kind=MustHaveKind.MINIMUM_YEARS_EXPERIENCE,
+                label="Must have 10+ years",
+                minimum_years=10.0,
+            ),
+        ),
+        weighted_criteria=_GENERAL_JRP.weighted_criteria,
+    )
+    profile = CandidateProfile(
+        skills=("SQL",),  # meets neither Python nor Kubernetes
+        years_of_experience=1.0,  # meets neither the years floor
+        education_level=EducationLevel.BACHELOR,
+        project_count=0,
+    )
+
+    score = ScoringEngine().score(profile, jrp, parser_version="stub-0.1.0")
+
+    assert score.passed_must_have is False
+    assert score.failed_must_have_labels == (
+        "Must know Python",
+        "Must know Kubernetes",
+        "Must have 10+ years",
+    )
 
 
 def test_t2_4_candidate_passing_must_have_but_scoring_poorly_gets_a_normal_weighted_score() -> None:
@@ -84,7 +128,7 @@ def test_t2_4_candidate_passing_must_have_but_scoring_poorly_gets_a_normal_weigh
     score = ScoringEngine().score(profile, _GENERAL_JRP, parser_version="stub-0.1.0")
 
     assert score.passed_must_have is True
-    assert score.failed_must_have_label is None
+    assert score.failed_must_have_labels == ()
     assert score.total_score > 0.0
     assert len(score.breakdown) == 4
 

@@ -64,11 +64,18 @@ def generate_interview_questions(
             gap_asked = True
 
     if score.breakdown:
-        if not verification_asked:
-            strongest = max(score.breakdown, key=lambda r: r.curve_score)
+        strongest = max(score.breakdown, key=lambda r: r.curve_score)
+        weakest = min(score.breakdown, key=lambda r: r.curve_score)
+        # Guarded by more than "not verification_asked"/"not gap_asked": if every dimension
+        # already cleared the *opposite* threshold (e.g. every dimension is a strength), the
+        # fallback's own candidate would be a dimension that already got that opposite-angle
+        # question -- asking about it again from this angle would be self-contradictory (e.g. "you
+        # scored strongly" and "your profile shows a gap" about the same dimension). In that case
+        # there's genuinely nothing left in the "opposite" direction to probe, so it's skipped
+        # rather than forced.
+        if not verification_asked and strongest.curve_score > LOW_SCORE_THRESHOLD:
             questions.append(_verification_question(_DIMENSION_LABELS[strongest.dimension]))
-        if not gap_asked:
-            weakest = min(score.breakdown, key=lambda r: r.curve_score)
+        if not gap_asked and weakest.curve_score < HIGH_SCORE_THRESHOLD:
             questions.append(_gap_question(_DIMENSION_LABELS[weakest.dimension]))
 
     questions.append(

@@ -18,7 +18,7 @@ from hr_digital_employee.intake_extraction.interfaces import (
 )
 from hr_digital_employee.scoring_engine.models import CandidateProfile, EducationLevel
 
-_EXPLICIT_YEARS_PATTERN = re.compile(r"(\d+)\+?\s*years?", re.IGNORECASE)
+_EXPLICIT_YEARS_PATTERN = re.compile(r"(\d{1,3})\+?\s*years?", re.IGNORECASE)
 _YEAR_RANGE_PATTERN = re.compile(r"\b((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})\b")
 
 _DEGREE_KEYWORDS: tuple[tuple[EducationLevel, re.Pattern[str]], ...] = (

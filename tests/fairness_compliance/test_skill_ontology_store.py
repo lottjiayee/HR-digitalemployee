@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hr_digital_employee.fairness_compliance.skill_ontology_store import SkillOntologyRepository
 from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog
 from hr_digital_employee.scoring_engine.engine import ScoringEngine
@@ -31,6 +33,20 @@ def test_terms_outside_any_group_still_match_exactly() -> None:
 
     assert repo.resolves_same_skill("Python", "Python") is True
     assert repo.resolves_same_skill("Python", "SQL") is False
+
+
+def test_a_group_overlapping_an_earlier_ones_term_is_rejected_not_silently_applied() -> None:
+    # Regression: a later group sharing a term with an earlier one used to silently overwrite
+    # that term's mapping, breaking the earlier group's synonymy with no error -- a routine
+    # ontology edit could silently make a JD requiring "C#" stop matching a candidate who listed
+    # "CSharp", with zero visibility into why.
+    repo = SkillOntologyRepository(InMemoryAuditLog())
+    repo.add_synonym_group(("C#", "CSharp"), actor="hr_alice", reason="initial group")
+
+    with pytest.raises(ValueError, match="already mapped"):
+        repo.add_synonym_group(("C", "C#"), actor="hr_alice", reason="overlapping group")
+
+    assert repo.resolves_same_skill("C#", "CSharp") is True  # unchanged by the rejected update
 
 
 def test_updates_are_audit_logged() -> None:

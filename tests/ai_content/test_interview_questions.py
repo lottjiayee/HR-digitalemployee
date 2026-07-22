@@ -128,6 +128,61 @@ def test_all_three_angles_are_covered_even_when_every_dimension_is_mid_range() -
     assert QuestionAngle.BEHAVIORAL in angles
 
 
+def test_no_contradictory_questions_when_every_dimension_is_a_strength() -> None:
+    # Regression: when every dimension already cleared HIGH_SCORE_THRESHOLD (and so already got
+    # its own verification question), the gap-fallback used to still pick the *weakest of the
+    # strengths* and ask a gap question about it too -- e.g. "you scored strongly on your project
+    # work" and, about that same dimension, "your profile shows your project work below this
+    # role's target" in the same output.
+    strong_jrp = JRP(
+        jrp_id="role-3",
+        role_name="Backend Engineer",
+        version=1,
+        weight_template=WeightTemplate.GENERAL,
+        weighted_criteria=(
+            WeightedCriterion(
+                dimension=Dimension.MANDATORY_SKILLS,
+                weight=40.0,
+                curve=MatchingCurve.LINEAR,
+                required_skills=("Python",),
+            ),
+            WeightedCriterion(
+                dimension=Dimension.EXPERIENCE_TENURE,
+                weight=30.0,
+                curve=MatchingCurve.LINEAR,
+                required_years=1.0,
+            ),
+            WeightedCriterion(
+                dimension=Dimension.EDUCATIONAL_LEVEL,
+                weight=15.0,
+                curve=MatchingCurve.LINEAR,
+                required_education_level=EducationLevel.HIGH_SCHOOL,
+            ),
+            WeightedCriterion(
+                dimension=Dimension.PROJECT_RELEVANCE,
+                weight=15.0,
+                curve=MatchingCurve.LINEAR,
+                required_project_count=1,
+            ),
+        ),
+    )
+    resume_text = (
+        "Skills:\nPython\n\n"
+        "Projects:\nBuilt a data pipeline\n\n"
+        "Working Experience:\n10 years at TechCorp\n\n"
+        "Education:\nBachelor of Computer Science\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+    profile = build_candidate_profile(extracted)
+    score = ScoringEngine().score(profile, strong_jrp, extracted.parser_version)
+    assert all(r.curve_score >= 0.85 for r in score.breakdown)  # confirm the premise
+
+    questions = generate_interview_questions(score, extracted)
+
+    assert not any(q.angle is QuestionAngle.GAP for q in questions)
+    assert sum(1 for q in questions if q.angle is QuestionAngle.VERIFICATION) == 4
+
+
 def test_behavioral_question_references_a_real_project_when_available() -> None:
     resume_text = "Skills:\nPython\n\nProjects:\nBuilt an internal analytics dashboard\n"
     extracted = ExtractionService().extract(resume_text)

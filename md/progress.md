@@ -64,7 +64,7 @@ test_architectural_invariants.py` enforces FR-9's determinism wall by AST-checki
 `scoring_engine` may never import `ai_content` or `fairness_compliance`, and `ai_content` may never
 construct a `Score`.
 
-235 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
+254 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
 without the Tesseract binary). See `ASSUMPTIONS.md` at the repo root for every stub this draft
 makes — including an observed, non-theoretical accuracy tradeoff for local OCR vs. a managed cloud
 provider. Module 6 is an empty placeholder package only; Module 5 has the CLI bridge above as a
@@ -141,6 +141,70 @@ legitimate LLM paraphrasing (a genuine paraphrase's own coverage ratio measured 
 attack's), so it's documented as a confirmed, demonstrated gap needing real semantic verification
 rather than a heuristic that would create false confidence. 223 -> 235 tests; ruff/mypy clean.
 
+**2026-07-22 security + logic review, round 3:** four parallel reviews covering
+dedup/extraction/review-queue, scoring-engine internals, ai_content/fairness_compliance internals,
+and jrp_editor+cli+governance_audit, every finding verified by running the real code (including the
+JRP editor's UI, via Streamlit's `AppTest`). Found and fixed 13 more real bugs (full write-ups in
+ASSUMPTIONS.md) -- the two most consequential: (1) `dedup.py` used to auto-merge two different real
+candidates who happened to share an exact full name with no other identifying info, silently, with
+no human ever seeing it; (2) the JRP editor's per-dimension widgets used a fixed Streamlit `key=`,
+so loading a file or switching weight templates showed a green success message while every widget
+kept silently displaying the *previous* JRP's stale values underneath -- HR would have been editing
+the wrong data with a false-positive confirmation telling them otherwise. Also fixed: a prose
+sentence ending in a bare section-header word could steal that section's marker slot in
+`extraction.py`; an unbounded hidden-text regex in `injection_screening.py` could strip real,
+unrelated resume content between two ordinary style attributes; a forgeable delimiter in
+`text_extraction_log.py`; a NaN `years_of_experience` silently poisoning a Score; whitespace and
+silent-overwrite bugs in both skill-ontology implementations; a missing version-monotonicity/
+atomicity check in `jrp_repository.py`; a self-contradictory interview-question pair; and an
+uncaught crash on an incompatible `--audit-db` file. 235 -> 254 tests; ruff/mypy clean.
+
+**2026-07-22 spec revision (Module 2, must-have semantics):** the source SOP blueprint
+(`HR_Digital_Employee_Blueprint (2).docx`) was edited to change §2.2.2/§2.2.4: a failed must-have
+criterion no longer withholds the weighted score or forces Low Match — it is flagged alongside a
+fully-computed score/breakdown so HR sees the whole profile before deciding, never an auto-reject.
+Updated to match: `scoring_engine/engine.py`'s `score()` (removed the early-return-with-0.0-score
+path; must-have and weighted scoring now both always run), `fairness_compliance/explainability.py`
+(the must-have-failure explanation is appended to the full score explanation instead of replacing
+it with an empty one), plus `requirement.md` FR-7, `design.md` §3.4, `module-2-scoring-engine.md`,
+and `test.md` T2.3/TE2E.2. No other content differs between this SOP revision and the one
+`requirement.md`/`design.md` were originally built from (diffed line-by-line). 254 tests still pass
+(two rewritten: `test_t2_3_...`, `test_explanation_for_a_must_have_failure_...`); ruff/mypy clean.
+
+**2026-07-22 security + logic review, round 4:** three parallel reviews specifically targeting
+regressions from the must-have semantics change above, every finding reproduced before fixing.
+Found and fixed 6 more real bugs (full write-ups in ASSUMPTIONS.md) — the most consequential:
+`Score.failed_must_have_label` could only ever name the FIRST of several failing must-have
+criteria, found independently by two reviews, undercutting the revision's own "HR sees the whole
+profile" goal on the same day it was written; renamed to a `failed_must_have_labels` tuple across
+`engine.py`/`explainability.py`/`cli.py`. Also fixed: `cli.py`'s ranked report could show a
+disqualified candidate at #1 as "high_match" with the disqualification easy to miss on a skim (a
+direct regression from the score no longer being forced to 0); a `profile_adapter.py` crash
+(`OverflowError`) on an oversized digit run before "years"; `red_flags.py`'s gap/inconsistency
+detectors silently dropping every match after the first; `dedup.py` auto-merging two different
+people whose phone/email were non-empty punctuation that both normalized to `""`; and
+`jrp_editor/app.py`'s must-have table having zero columns on every brand-new JRP. 254 -> 261 tests;
+ruff/mypy clean.
+
+**2026-07-22 security + logic review, round 5:** a test-coverage/architectural audit plus two
+adversarial sweeps, six more real bugs found and fixed (full write-ups in ASSUMPTIONS.md) — the
+most consequential: `extraction.py`'s section headers were English-only, so an identical candidate
+scored 60.0/Mid Match with English headers but 0.0/Low Match with Chinese headers, silently
+violating SOP 2.1.1's own "identical qualifications, identical outcome regardless of language mix"
+guarantee; now recognizes Chinese and bilingual (e.g. "Skills · 技能") headers for all four
+sections. Also fixed: `cli.py` crashing on a CJK/emoji candidate name under a legacy console
+encoding; a candidate label forging a fake extra report row via an embedded newline; two more
+`jrp_config.py` fields (`required_education_level`, `required_skills` elements) that parsed fine
+but crashed later mid-scoring instead of raising a clean `JRPConfigError`; a second `channel_
+adapters.py` TOCTOU race at the folder level (round 2 only fixed the per-file one); and the
+`ai_content`/`fairness_compliance` architectural-invariant test being defeated by `dataclasses.
+replace` (a literal `"Score("` substring search missed a genuine `Score` mutation) — rewritten to
+be AST-based, and extended to cover `fairness_compliance` too. Three findings documented rather
+than code-patched this round (a live/unversioned skill-ontology object that can silently change a
+score's outcome between two identical calls; the "raw text never reaches an LLM" guarantee being
+comment-only, not code-enforced; `SqliteAuditLog` having no schema-versioning path) — see
+ASSUMPTIONS.md. 261 -> 272 tests; ruff/mypy clean.
+
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
 (per prompt.md §3's stub-and-document rule), and ones that are real-world facts no amount of code
@@ -212,7 +276,8 @@ named person to exist), but the system should not go live until they're resolved
 
 - [x] JRP data model — weights, must-have flags, curves; versioned via `JRPRepository`
 - [x] Weight template presets (5 role types, exact percentages) + validation (sum to 100%)
-- [x] Must-have gating check — separate `must_have_criteria` list, no weighted score computed on failure
+- [x] Must-have gating check — separate `must_have_criteria` list; a failure is flagged alongside
+      a fully-computed weighted score (2026-07-22 SOP revision — previously withheld the score)
 - [x] Matching curves (Linear/Step/Buffered)
 - [x] Skill-ontology-backed matching — consumption point built (`SkillOntology` protocol); real
       ontology table is Module 4's, not built yet (stub-only `IdentitySkillOntology`/

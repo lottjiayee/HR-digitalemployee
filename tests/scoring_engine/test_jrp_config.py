@@ -228,3 +228,24 @@ def test_scalar_required_skills_raises_jrp_config_error_not_silent_char_splittin
 
     with pytest.raises(JRPConfigError, match="required_skills must be a list"):
         _parse(config)
+
+
+def test_non_string_required_skills_element_raises_jrp_config_error_not_a_later_crash() -> None:
+    # Regression: a non-string element (e.g. a YAML int) passed the list/tuple type check and
+    # loaded with zero further validation, then crashed later, mid-scoring, the moment
+    # skill-ontology matching called a string method on it.
+    config = FULL_CONFIG.replace("required_skills: [Python, SQL]", "required_skills: [123, 456]")
+
+    with pytest.raises(JRPConfigError, match="required_skills must all be strings"):
+        _parse(config)
+
+
+def test_non_string_required_education_level_raises_jrp_config_error_not_a_later_crash() -> None:
+    # Regression: a non-string value (e.g. a YAML int) crashed with an unrelated AttributeError
+    # (`'int' object has no attribute 'upper'`) instead of a clean JRPConfigError.
+    config = FULL_CONFIG.replace(
+        "required_education_level: bachelor", "required_education_level: 5"
+    )
+
+    with pytest.raises(JRPConfigError, match="required_education_level must be a string"):
+        _parse(config)

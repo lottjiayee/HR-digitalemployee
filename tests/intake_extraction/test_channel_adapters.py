@@ -103,3 +103,21 @@ def test_a_file_deleted_between_listing_and_reading_is_skipped_not_a_crash(
 
     assert len(submissions) == 1
     assert submissions[0].file_bytes == b"Skills:\nSQL\n"
+
+
+def test_the_whole_folder_vanishing_between_the_exists_check_and_listing_is_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: the same class of TOCTOU race as above, one level up -- `exists()` passing
+    # doesn't guarantee `iterdir()` will succeed a moment later (a concurrent cleanup job, an
+    # unmounted network share). Only the per-file read was ever guarded; the folder-level listing
+    # itself raised an uncaught OSError out of fetch_new_submissions().
+    (tmp_path / "resume1.pdf").write_bytes(b"Skills:\nPython\n")
+    adapter = LocalFolderChannelAdapter(tmp_path)
+
+    def _vanished_iterdir(self: Path) -> object:
+        raise FileNotFoundError(f"{self} vanished")
+
+    monkeypatch.setattr(Path, "iterdir", _vanished_iterdir)
+
+    assert adapter.fetch_new_submissions() == []

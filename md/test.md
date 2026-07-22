@@ -36,7 +36,7 @@ here pass.
 |---|---|---|---|---|
 | T2.1 | FR-6 | Create a JRP selecting the "Senior technical" template, then attempt to save with weights not summing to 100% | Save is rejected with a validation error | |
 | T2.2 | FR-6 | Create a JRP, fine-tune weights to sum to exactly 100%, save | Save succeeds; weights persisted | |
-| T2.3 | FR-7 | Mark one criterion must-have, one weighted; submit a candidate who fails the must-have | Candidate is disqualified / forced to Low Match; no weighted score is computed | |
+| T2.3 | FR-7 | Mark one criterion must-have, one weighted; submit a candidate who fails the must-have | Candidate is flagged as failing the must-have, but the weighted score is still fully computed and shown alongside the flag (revised 2026-07-22 — was: disqualified/no score computed) | |
 | T2.4 | FR-7 | Same JRP, submit a candidate who passes must-have but scores poorly on weighted criteria | Candidate receives a normal weighted score (not disqualified) | |
 | T2.5 | FR-8 | Configure Experience Tenure with Linear curve, requirement = 5 years; submit a candidate with 4 years | Score = ~80% for that dimension | |
 | T2.6 | FR-8 | Same requirement with Step curve; submit a candidate with 4 years | Score = 0% for that dimension | |
@@ -147,7 +147,7 @@ here pass.
 | ID | Covers | Steps | Expected Result | Result |
 |---|---|---|---|---|
 | TE2E.1 | Modules 1→2→5 | Submit a strong-match resume end-to-end via Email | Candidate is extracted, scored, appears on dashboard with correct tier, notification card fires | |
-| TE2E.2 | Modules 2→3→5 | Submit a candidate who fails a must-have criterion | Candidate is disqualified/Low-Match, but still appears in the dashboard (never silently removed) with a factual summary and gap-analysis questions | |
+| TE2E.2 | Modules 2→3→5 | Submit a candidate who fails a must-have criterion | Candidate is flagged as failing the must-have but still receives its actual weighted score/tier (not forced to Low Match) and appears in the dashboard (never silently removed) with a factual summary and gap-analysis questions | |
 | TE2E.3 | Modules 5→6→7 | HR passes a candidate to interview stage | Scheduling loop initiates automatically; decision is logged; scheduling proceeds per Module 6 rules | |
 | TE2E.4 | Modules 1→4→7 | Submit resumes across two channels for groups with different protected characteristics over a full test cohort | Four-fifths testing correctly computes selection rates without ever touching individual identities in the scoring path | |
 | TE2E.5 | Full rollback (NFR-6) | Force two consecutive measurement periods of degraded core metrics | System automatically degrades to human-assisted mode across both workflows (scores advisory only, manual scheduling) | |

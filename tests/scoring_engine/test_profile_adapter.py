@@ -71,6 +71,18 @@ def test_years_of_experience_prefers_the_largest_explicit_mention() -> None:
     assert profile.years_of_experience == 8.0
 
 
+def test_years_of_experience_does_not_crash_on_an_oversized_digit_run() -> None:
+    # Regression: `int(m) for m in explicit_matches` parses arbitrary-precision ints fine, but the
+    # surrounding `float(max(...))` raised `OverflowError` on a huge digit run (garbled OCR, a
+    # copy-paste artifact, or adversarial input) -- crashing the whole candidate, and with it the
+    # whole CLI batch (no exception boundary around per-candidate scoring in `cli.py`).
+    resume = _resume(experience=_verified("9" * 400 + " years of experience in engineering"))
+
+    profile = build_candidate_profile(resume)
+
+    assert profile.years_of_experience == 999.0
+
+
 def test_years_of_experience_falls_back_to_summed_year_ranges() -> None:
     resume = _resume(
         experience=_verified(

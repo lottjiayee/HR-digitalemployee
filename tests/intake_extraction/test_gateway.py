@@ -254,7 +254,8 @@ def test_extracted_text_is_appended_to_the_text_log_when_one_is_configured(
 
     logged = log_path.read_text(encoding="utf-8")
     assert "h@example.com" in logged
-    assert "Python\nSQL" in logged
+    assert "Python" in logged
+    assert "SQL" in logged
 
 
 def test_unparseable_submission_is_not_written_to_the_text_log(tmp_path: Path) -> None:

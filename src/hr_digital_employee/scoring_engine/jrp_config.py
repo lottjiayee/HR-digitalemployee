@@ -122,6 +122,10 @@ def _parse_weighted_criterion(
             f"required_skills must be a list, got {type(required_skills).__name__}: "
             f"{required_skills!r}"
         )
+    if required_skills is not None and not all(isinstance(skill, str) for skill in required_skills):
+        # A non-string element (e.g. `required_skills: [123]`) parses fine here but crashes later,
+        # mid-scoring, the moment skill-ontology matching calls a string method on it.
+        raise ValueError(f"required_skills must all be strings, got {required_skills!r}")
 
     return WeightedCriterion(
         dimension=dimension,
@@ -136,9 +140,14 @@ def _parse_weighted_criterion(
     )
 
 
-def _parse_education_level(value: str) -> EducationLevel:
+def _parse_education_level(value: Any) -> EducationLevel:
     # EducationLevel is an IntEnum (values 0-5) -- look it up by member *name*, not by value,
     # so a YAML string like "bachelor" resolves to EducationLevel.BACHELOR.
+    if not isinstance(value, str):
+        # A non-string (e.g. `required_education_level: 5`) parses fine here but would otherwise
+        # crash with an unrelated AttributeError (`'int' object has no attribute 'upper'`) instead
+        # of a clean, actionable JRPConfigError.
+        raise ValueError(f"required_education_level must be a string, got {value!r}")
     try:
         return EducationLevel[value.upper()]
     except KeyError:

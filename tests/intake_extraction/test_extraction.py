@@ -37,6 +37,55 @@ def test_t1_3_extracts_all_four_pillars_with_confidence() -> None:
     assert resume.projects.status is FieldStatus.VERIFIED
 
 
+def test_t1_12_chinese_section_headers_are_recognized_same_as_english() -> None:
+    # Regression: the header regex was English-keyword-only, so a resume using Chinese section
+    # headers (a real scenario per SOP 2.1.1's "mixed Chinese-English text" validation
+    # requirement) had every field UNVERIFIED even with clearly-structured, complete content --
+    # violating the SOP's own consistency guarantee that identical qualifications must produce
+    # identical outcomes regardless of language mix.
+    resume = """\
+技能：
+Python
+SQL
+
+项目：
+Built a data pipeline
+
+工作经验：
+5 years at TechCorp as a backend engineer
+
+教育背景：
+Bachelor of Computer Science
+"""
+    extracted = ExtractionService().extract(resume)
+
+    assert extracted.skills.status is FieldStatus.VERIFIED
+    assert extracted.skills.value == ["Python", "SQL"]
+    assert extracted.projects.status is FieldStatus.VERIFIED
+    assert extracted.experience.status is FieldStatus.VERIFIED
+    assert extracted.education.status is FieldStatus.VERIFIED
+
+
+def test_t1_12_bilingual_section_headers_on_one_line_are_recognized() -> None:
+    # A header stating both languages together (e.g. "Skills · 技能"), common on Hong Kong
+    # bilingual resume templates, must also resolve -- not just headers purely in one language.
+    resume = """\
+Skills · 技能:
+Python
+
+Working Experience · 工作经验:
+5 years at TechCorp
+
+Education · 教育背景:
+Bachelor of Computer Science
+"""
+    extracted = ExtractionService().extract(resume)
+
+    assert extracted.skills.status is FieldStatus.VERIFIED
+    assert extracted.experience.status is FieldStatus.VERIFIED
+    assert extracted.education.status is FieldStatus.VERIFIED
+
+
 def test_t1_5_missing_section_is_unverified_not_failed() -> None:
     text_without_education = "Skills:\nPython\n\nWorking Experience:\n5 years engineering"
     resume = ExtractionService().extract(text_without_education)
@@ -65,6 +114,36 @@ def test_work_history_header_is_recognized_as_experience() -> None:
     assert resume.experience.value == "5 years as a server"
     # The Skills section must stop at "Work History:", not swallow it.
     assert resume.skills.value == ["Excel"]
+
+
+def test_a_prose_sentence_ending_in_a_section_word_does_not_steal_the_real_headers_slot() -> None:
+    # Regression: the header regex used to require only "keyword + optional colon + newline"
+    # anywhere in the text, with no anchor -- an ordinary prose line ending in a bare section
+    # word (no trailing punctuation) satisfied that just as well as a real standalone header,
+    # consuming that section's one marker slot before the real header was ever reached. Real
+    # Education content was silently absorbed into Experience instead of its own field.
+    resume_text = (
+        "Summary:\nPassionate about continuous learning and education\n\n"
+        "Skills:\nPython, SQL\n\n"
+        "Working Experience:\n5 years at TechCorp as backend engineer\n\n"
+        "Education:\nBachelor of Computer Science, MIT, 2015\n"
+    )
+    resume = ExtractionService().extract(resume_text)
+
+    assert resume.education.status is FieldStatus.VERIFIED
+    assert resume.education.value == "Bachelor of Computer Science, MIT, 2015"
+    assert "MIT" not in (resume.experience.value or "")
+
+
+def test_a_short_subheading_ending_in_a_section_word_is_still_recognized() -> None:
+    # Counterpart to the regression above: a short label-like subheading (not a full sentence)
+    # must still be recognized, matching the real-world-template behavior this module already
+    # relies on elsewhere (e.g. "Adult Care Experience").
+    resume_text = "Adult Care Experience\n5 years, Example Center\n\nEducation:\nBSc"
+    resume = ExtractionService().extract(resume_text)
+
+    assert resume.experience.status is FieldStatus.VERIFIED
+    assert "Example Center" in resume.experience.value
 
 
 def test_employment_history_header_is_recognized_as_experience() -> None:

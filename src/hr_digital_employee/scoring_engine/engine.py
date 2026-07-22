@@ -84,20 +84,18 @@ class ScoringEngine:
 
     def score(self, profile: CandidateProfile, jrp: JRP, parser_version: str) -> Score:
         """`parser_version` identifies the Module 1 extraction run `profile` was derived from
-        (NFR-5: every score records both the scoring-engine and the parser version)."""
-        for criterion in jrp.must_have_criteria:
-            if not _meets_must_have(profile, criterion, self._skill_ontology):
-                return Score(
-                    jrp_id=jrp.jrp_id,
-                    jrp_version=jrp.version,
-                    scoring_engine_version=self._engine_version,
-                    parser_version=parser_version,
-                    total_score=0.0,
-                    tier=jrp.tier_thresholds.classify(0.0),
-                    passed_must_have=False,
-                    failed_must_have_label=criterion.label,
-                    breakdown=(),
-                )
+        (NFR-5: every score records both the scoring-engine and the parser version).
+
+        A failed must-have criterion no longer withholds the weighted score (SOP 2.2.2/2.2.4,
+        2026-07-22 revision): it is flagged alongside a fully-computed score/breakdown so HR sees
+        the whole profile before deciding, rather than an opaque 0/Low-Match with no detail. Every
+        failing must-have is recorded, not just the first -- a candidate missing three must-haves
+        is entitled to see all three, not one arbitrary pick."""
+        failed_labels = tuple(
+            criterion.label
+            for criterion in jrp.must_have_criteria
+            if not _meets_must_have(profile, criterion, self._skill_ontology)
+        )
 
         breakdown: list[DimensionResult] = []
         total_score = 0.0
@@ -124,7 +122,7 @@ class ScoringEngine:
             parser_version=parser_version,
             total_score=total_score,
             tier=jrp.tier_thresholds.classify(total_score),
-            passed_must_have=True,
-            failed_must_have_label=None,
+            passed_must_have=not failed_labels,
+            failed_must_have_labels=failed_labels,
             breakdown=tuple(breakdown),
         )

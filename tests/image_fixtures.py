@@ -51,9 +51,9 @@ def build_decompression_bomb_png_bytes() -> bytes:
 
 def build_sidebar_resume_image() -> bytes:
     """A synthetic two-column resume layout with small icon glyphs next to sidebar text --
-    reproduces (without embedding a real downloaded file) the icon/sidebar/multi-column shape
-    that a real-world resume image was observed to OCR noticeably worse than a clean single-column
-    layout (see ASSUMPTIONS.md's OCR accuracy tradeoff section)."""
+    exercises OCR against a dense multi-column/icon layout, contrasted with
+    `build_clean_layout_with_icon_row_image()`'s single-column counterpart (see ASSUMPTIONS.md's
+    OCR accuracy tradeoff section)."""
     width, height = 700, 320
     image = Image.new("RGB", (width, height), color="white")
     draw = ImageDraw.Draw(image)

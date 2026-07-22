@@ -207,9 +207,12 @@ class CandidateProfile:
     project_count: int
 
     def __post_init__(self) -> None:
-        if self.years_of_experience < 0:
+        # `nan < 0` is False, so a NaN would otherwise sail past this check, then silently poison
+        # every curve/total-score computation downstream with no exception anywhere (FR-9:
+        # nothing in this deterministic module should silently produce a wrong result).
+        if math.isnan(self.years_of_experience) or self.years_of_experience < 0:
             raise ValueError(
-                f"years_of_experience cannot be negative, got {self.years_of_experience}"
+                f"years_of_experience cannot be negative or NaN, got {self.years_of_experience}"
             )
         if self.project_count < 0:
             raise ValueError(f"project_count cannot be negative, got {self.project_count}")
@@ -239,5 +242,5 @@ class Score:
     total_score: float
     tier: Tier
     passed_must_have: bool
-    failed_must_have_label: str | None
+    failed_must_have_labels: tuple[str, ...]
     breakdown: tuple[DimensionResult, ...]

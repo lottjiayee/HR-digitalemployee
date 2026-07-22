@@ -33,3 +33,20 @@ def test_near_zero_font_size_pattern_is_flagged() -> None:
     result = screen(raw)
 
     assert result.suspected_injection is True
+
+
+def test_two_unrelated_far_apart_white_color_mentions_do_not_wipe_the_resume_in_between() -> None:
+    # Regression: the paired-color pattern had no distance bound, so *any* two white-color CSS
+    # mentions anywhere in the whole document -- not just a single genuinely-hidden span -- used
+    # to bridge everything between them and get stripped, destroying real, unrelated resume
+    # content that was never actually hidden.
+    filler = "Python, SQL, Java, Go, Rust, JavaScript, TypeScript, Kubernetes, Docker. " * 6
+    raw = (
+        f'<span style="color:#ffffff;">Banner</span>\n'
+        f"Skills:\n{filler}\n"
+        f'Footer <span style="color:#ffffff;">watermark</span>\n'
+    )
+    result = screen(raw)
+
+    assert result.suspected_injection is False
+    assert "Python" in result.cleaned_text

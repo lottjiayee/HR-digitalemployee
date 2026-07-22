@@ -22,7 +22,16 @@ class JRPRepository:
         self._jrps: dict[str, JRP] = {}
 
     def save(self, jrp: JRP, actor: str, reason: str) -> None:
-        self._jrps[jrp.jrp_id] = jrp
+        existing = self._jrps.get(jrp.jrp_id)
+        if existing is not None and jrp.version <= existing.version:
+            raise ValueError(
+                f"cannot save {jrp.jrp_id!r} at version {jrp.version}: version "
+                f"{existing.version} is already stored -- JRP versions must strictly increase"
+            )
+
+        # Audit-logged before the store is actually written: if record() raises, save() must
+        # leave nothing changed -- a caller catching the exception reasonably assumes the save
+        # never happened, which used to be false (the store write happened first).
         self._audit_log.record(
             AuditEvent(
                 actor=actor,
@@ -44,6 +53,7 @@ class JRPRepository:
                     version=str(jrp.version),
                 )
             )
+        self._jrps[jrp.jrp_id] = jrp
 
     def get(self, jrp_id: str) -> JRP | None:
         return self._jrps.get(jrp_id)

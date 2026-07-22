@@ -143,8 +143,10 @@ These are constraints the design must satisfy, traced to the SOP/requirement.md:
 ### 3.4 Scoring Engine
 - Pure, deterministic component. Input: structured extraction output + JRP definition. Output:
   score, tier, matching breakdown.
-- Sequence: must-have gate check → weighted dimension scoring (per configured curve) → normalize
-  to 0–100 → tier classification.
+- Sequence: must-have check and weighted dimension scoring (per configured curve) both run, then
+  normalize to 0–100 → tier classification — a failed must-have is flagged alongside the result,
+  never withholds it (SOP 2.2.2/2.2.4, revised 2026-07-22; the score is never auto-blocked, per the
+  human-in-the-loop principle in 1.4/SOP §1.4).
 - Has zero dependency on any LLM output or raw resume free text — only structured fields.
 - JRP configuration (weights, must-have flags, curves) is versioned and audit-logged on every
   change (FR-6–FR-8). Weight templates ship with the five presets in requirement.md FR-6

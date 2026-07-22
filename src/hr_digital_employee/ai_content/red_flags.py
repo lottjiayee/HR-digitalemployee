@@ -54,22 +54,27 @@ def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def _detect_inconsistency(text: str) -> RedFlag | None:
+def _detect_inconsistencies(text: str) -> tuple[RedFlag, ...]:
+    # Every overlapping pair is reported, not just the first found -- two independent
+    # inconsistencies in the same resume are two separate things worth asking about.
     ranges = _year_ranges(text)
+    flags: list[RedFlag] = []
     for i in range(len(ranges)):
         for j in range(i + 1, len(ranges)):
             start_a, end_a = ranges[i]
             start_b, end_b = ranges[j]
             if start_a < end_b and start_b < end_a:  # overlapping date ranges
-                return RedFlag(
-                    kind=RedFlagKind.INCONSISTENCY,
-                    description=(
-                        f"Overlapping dates found in work history ({start_a}-{end_a} and "
-                        f"{start_b}-{end_b}) -- worth clarifying with the candidate."
-                    ),
-                    neutral_framing=False,
+                flags.append(
+                    RedFlag(
+                        kind=RedFlagKind.INCONSISTENCY,
+                        description=(
+                            f"Overlapping dates found in work history ({start_a}-{end_a} and "
+                            f"{start_b}-{end_b}) -- worth clarifying with the candidate."
+                        ),
+                        neutral_framing=False,
+                    )
                 )
-    return None
+    return tuple(flags)
 
 
 def _detect_frequent_job_changes(text: str) -> RedFlag | None:
@@ -87,21 +92,26 @@ def _detect_frequent_job_changes(text: str) -> RedFlag | None:
     return None
 
 
-def _detect_employment_gap(text: str) -> RedFlag | None:
+def _detect_employment_gaps(text: str) -> tuple[RedFlag, ...]:
+    # Every gap between consecutive ranges is reported, not just the first -- a resume with two
+    # separate unexplained gaps deserves two clarification prompts, not one.
     ranges = _merge_ranges(_year_ranges(text))
+    flags: list[RedFlag] = []
     for (_start_earlier, end_earlier), (start_later, _end_later) in zip(
         ranges, ranges[1:], strict=False
     ):
         if start_later - end_earlier >= _MIN_GAP_YEARS:
-            return RedFlag(
-                kind=RedFlagKind.EMPLOYMENT_GAP,
-                description=(
-                    f"A gap between {end_earlier} and {start_later} isn't accounted for in the "
-                    "listed work history -- consider asking about this period."
-                ),
-                neutral_framing=True,
+            flags.append(
+                RedFlag(
+                    kind=RedFlagKind.EMPLOYMENT_GAP,
+                    description=(
+                        f"A gap between {end_earlier} and {start_later} isn't accounted for in "
+                        "the listed work history -- consider asking about this period."
+                    ),
+                    neutral_framing=True,
+                )
             )
-    return None
+    return tuple(flags)
 
 
 def _detect_keyword_stuffing(extracted: ExtractedResume) -> RedFlag | None:
@@ -127,8 +137,12 @@ def detect_red_flags(extracted: ExtractedResume) -> tuple[RedFlag, ...]:
         if extracted.experience.status is FieldStatus.VERIFIED and extracted.experience.value
         else ""
     )
-    detectors = (_detect_inconsistency, _detect_frequent_job_changes, _detect_employment_gap)
-    flags = [flag for detector in detectors if (flag := detector(experience_text)) is not None]
+    flags: list[RedFlag] = []
+    flags.extend(_detect_inconsistencies(experience_text))
+    frequent_job_changes_flag = _detect_frequent_job_changes(experience_text)
+    if frequent_job_changes_flag is not None:
+        flags.append(frequent_job_changes_flag)
+    flags.extend(_detect_employment_gaps(experience_text))
     stuffing_flag = _detect_keyword_stuffing(extracted)
     if stuffing_flag is not None:
         flags.append(stuffing_flag)

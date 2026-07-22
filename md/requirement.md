@@ -95,7 +95,11 @@ captured before go-live and re-measured quarterly.
   | Managerial | 25% | 30% | 15% | 30% |
   | Licensed / compliance | 50% | 20% | 20% | 10% |
 
-- FR-7: Each criterion must be tagged must-have (gating) or weighted (scored).
+- FR-7: Each criterion must be tagged must-have (gating) or weighted (scored). A failed must-have
+  is flagged as failed rather than blocking the score: the weighted calculation still runs, and the
+  failure is shown alongside the result so HR sees the full profile before deciding — the system
+  never auto-rejects a candidate (SOP 2.2.2/2.2.4, revised 2026-07-22; see FR-13's human-in-the-loop
+  rule).
 - FR-8: Matching curve (Linear/Step/Buffered) must be configurable per dimension per role.
 - FR-9: Scoring must be deterministic; LLM-assisted components (summary, interview questions) must
   never alter a score, tier, or gating outcome.

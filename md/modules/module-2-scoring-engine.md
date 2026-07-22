@@ -43,8 +43,10 @@ HR can fine-tune any of these per JRP; the system validates the result still sum
 
 ## 4. Key Design Constraints
 
-- Scoring sequence is fixed: must-have check → disqualify if failed → weighted dimension scoring
-  (curve-adjusted) → weight multiplication → normalize to 0–100 → tier assignment.
+- Scoring sequence is fixed: must-have check and weighted dimension scoring (curve-adjusted →
+  weight multiplication → normalize to 0–100 → tier assignment) both run every time. A failed
+  must-have never withholds the score — it is flagged alongside the fully-computed result so HR
+  sees the whole profile before deciding (SOP 2.2.2/2.2.4, revised 2026-07-22).
 - Consumes **only structured extraction output** from Module 1 — never raw resume text, never
   LLM-generated content, as inputs to the calculation.
 - Weight templates (see table above) are configuration, not hardcoded per role — HR can override
@@ -71,7 +73,8 @@ HR can fine-tune any of these per JRP; the system validates the result still sum
 
 - [x] JRP data model (weights, must-have flags, curves, versioning)
 - [x] Weight template presets (5 role types, exact percentages above) + validation (sum to 100%)
-- [x] Must-have gating check (disqualify path, no weighted calc on fail)
+- [x] Must-have gating check (flag-alongside-full-score path, per the 2026-07-22 SOP revision —
+      does not withhold the weighted calc on fail)
 - [x] Matching curve implementations: Linear, Step, Buffered
 - [x] Skill-ontology-backed matching (consumption point built; real ontology is Module 4's, not
       built yet — see ASSUMPTIONS.md)

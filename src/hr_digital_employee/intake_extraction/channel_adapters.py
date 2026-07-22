@@ -50,9 +50,17 @@ class LocalFolderChannelAdapter:
         submissions: list[RawSubmission] = []
         if not self._folder.exists():
             return submissions
-        matches = (
-            path for path in self._folder.iterdir() if path.suffix.lower() in _SUPPORTED_EXTENSIONS
-        )
+        try:
+            # The folder can vanish between the `exists()` check above and this listing (a
+            # concurrent cleanup job, an unmounted network share) -- treat that the same as it not
+            # existing at all (no submissions this cycle) rather than an uncaught OSError.
+            matches = [
+                path
+                for path in self._folder.iterdir()
+                if path.suffix.lower() in _SUPPORTED_EXTENSIONS
+            ]
+        except OSError:
+            return submissions
         new_paths = sorted(path for path in matches if path not in self._seen_paths)
         for file_path in new_paths:
             self._seen_paths.add(file_path)

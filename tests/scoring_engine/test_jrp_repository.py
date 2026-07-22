@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog
 from hr_digital_employee.scoring_engine.jrp_repository import JRPRepository
 from hr_digital_employee.scoring_engine.models import (
@@ -100,3 +102,49 @@ def test_save_does_not_audit_log_a_warning_when_weights_are_within_guideline() -
         e for e in audit_log.events_for("role-1") if e.action == "jrp_weight_guideline_warning"
     ]
     assert warning_events == []
+
+
+def test_saving_a_lower_version_over_a_higher_one_is_rejected() -> None:
+    # Regression: save() had no version-monotonicity check at all -- an accidental save of an
+    # older/duplicate version silently overwrote a newer one, with only a forensic (not
+    # preventive) audit trail; any candidate scored via get() afterward was silently scored
+    # against stale criteria.
+    audit_log = InMemoryAuditLog()
+    repo = JRPRepository(audit_log)
+    repo.save(_jrp(version=3), actor="hr_alice", reason="v3")
+
+    with pytest.raises(ValueError, match="must strictly increase"):
+        repo.save(_jrp(version=1), actor="hr_alice", reason="oops, v1 again")
+
+    assert repo.get("role-1").version == 3  # type: ignore[union-attr]
+
+
+def test_saving_the_same_version_again_is_rejected() -> None:
+    audit_log = InMemoryAuditLog()
+    repo = JRPRepository(audit_log)
+    repo.save(_jrp(version=1), actor="hr_alice", reason="initial")
+
+    with pytest.raises(ValueError, match="must strictly increase"):
+        repo.save(_jrp(version=1), actor="hr_alice", reason="duplicate save")
+
+
+def test_save_does_not_store_the_jrp_if_audit_logging_fails() -> None:
+    # Regression: the store write happened *before* the audit-log call, so a failure recording
+    # the audit event still left the new JRP live with no corresponding audit trail entry at all
+    # -- directly undermining "every JRP change is audit-logged."
+    class _RaisingAuditLog:
+        def record(self, event: object) -> None:
+            raise RuntimeError("simulated audit log failure")
+
+        def events_for(self, entity_ref: str) -> list[object]:
+            return []
+
+        def all_events(self) -> list[object]:
+            return []
+
+    repo = JRPRepository(_RaisingAuditLog())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError):
+        repo.save(_jrp(version=1), actor="hr_alice", reason="initial")
+
+    assert repo.get("role-1") is None

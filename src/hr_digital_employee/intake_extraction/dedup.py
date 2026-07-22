@@ -11,9 +11,12 @@ from hr_digital_employee.intake_extraction.models import (
     RawSubmission,
 )
 
-_AMBIGUOUS_NAME_SIMILARITY_BAND = (0.4, 0.99)
-"""Below this band: treated as a different person (new profile). Within: ambiguous, needs a
-human (SOP 2.1.3 -- never auto-merge on an uncertain match). At/above the top: confident match."""
+_AMBIGUOUS_NAME_SIMILARITY_THRESHOLD = 0.4
+"""At/above this: ambiguous, needs a human (SOP 2.1.3 -- never auto-merge on an uncertain match).
+Below: treated as a different person (new profile). A name -- even an *exact* full-name match --
+is never enough on its own to auto-merge (see MERGED_INTO_EXISTING's `matched_on` handling below):
+a name isn't a unique identifier, and two different real candidates sharing one common name would
+otherwise be silently merged with no human ever seeing it (ASSUMPTIONS.md)."""
 
 
 def _name_similarity(a: str, b: str) -> float:
@@ -28,6 +31,16 @@ def _name_similarity(a: str, b: str) -> float:
         return 0.0
     overlap = len(a_tokens & b_tokens)
     return overlap / max(len(a_tokens), len(b_tokens))
+
+
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _normalize_phone(phone: str) -> str:
+    """Digits only -- drops spaces/dashes/parens/dots and a leading `+`, so "+1 (555) 123-4567"
+    and "15551234567" compare equal instead of being treated as different people's numbers."""
+    return "".join(char for char in phone if char.isdigit())
 
 
 class IdentityDedupService:
@@ -69,11 +82,20 @@ class IdentityDedupService:
     def _compare(
         self, submission: RawSubmission, existing: Candidate
     ) -> IdentityMatchResult | None:
+        # Compared on the *normalized* value's truthiness, not the raw one -- otherwise two
+        # different people whose raw email/phone are non-empty but normalize to the same empty
+        # string (e.g. phone "--" and "()", or email "   " and "\t") would collide and auto-merge.
         matched_on: list[str] = []
-        if submission.candidate_email and submission.candidate_email == existing.email:
-            matched_on.append("email")
-        if submission.candidate_phone and submission.candidate_phone == existing.phone:
-            matched_on.append("phone")
+        if submission.candidate_email and existing.email:
+            submission_email = _normalize_email(submission.candidate_email)
+            existing_email = _normalize_email(existing.email)
+            if submission_email and submission_email == existing_email:
+                matched_on.append("email")
+        if submission.candidate_phone and existing.phone:
+            submission_phone = _normalize_phone(submission.candidate_phone)
+            existing_phone = _normalize_phone(existing.phone)
+            if submission_phone and submission_phone == existing_phone:
+                matched_on.append("phone")
 
         if matched_on:
             return IdentityMatchResult(
@@ -84,14 +106,7 @@ class IdentityDedupService:
 
         if submission.candidate_name and existing.name:
             similarity = _name_similarity(submission.candidate_name, existing.name)
-            low, high = _AMBIGUOUS_NAME_SIMILARITY_BAND
-            if similarity >= high:
-                return IdentityMatchResult(
-                    outcome=MatchOutcome.MERGED_INTO_EXISTING,
-                    candidate=existing,
-                    matched_on=["name"],
-                )
-            if similarity >= low:
+            if similarity >= _AMBIGUOUS_NAME_SIMILARITY_THRESHOLD:
                 return IdentityMatchResult(
                     outcome=MatchOutcome.AMBIGUOUS,
                     candidate=existing,

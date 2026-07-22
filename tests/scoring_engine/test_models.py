@@ -133,6 +133,16 @@ def test_candidate_profile_rejects_negative_project_count() -> None:
         )
 
 
+def test_candidate_profile_rejects_nan_years_of_experience() -> None:
+    # Regression: `nan < 0` is False, so a NaN silently passed the old check and went on to
+    # poison every curve/total-score computation downstream with no exception anywhere.
+    with pytest.raises(ValueError, match="NaN"):
+        CandidateProfile(
+            skills=(), years_of_experience=float("nan"), education_level=EducationLevel.NONE,
+            project_count=0,
+        )
+
+
 def test_weight_guideline_warnings_flags_educational_level_over_the_default() -> None:
     jrp = JRP(
         jrp_id="role-1",

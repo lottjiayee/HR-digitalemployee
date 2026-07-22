@@ -650,6 +650,301 @@ before use, and both now merge overlapping ranges (a small interval-merge helper
 file rather than shared -- see the existing "duplicated year-range regex" entry above for why these
 two modules stay decoupled from each other) before summing/scanning for gaps.
 
+## Security + logic review, round 3 (2026-07-22): thirteen more real bugs found and fixed
+
+Four parallel reviews (dedup/extraction/review-queue, scoring-engine internals, ai_content/
+fairness_compliance internals, jrp_editor+cli+governance_audit), every finding verified by
+actually running the real code (including the JRP editor's Streamlit UI, via `AppTest`) before
+fixing.
+
+**Identity/data-integrity (`intake_extraction/dedup.py`):** an *exact* full-name match with no
+corroborating email/phone used to auto-merge outright -- two different real candidates sharing one
+common name (e.g. two "John Smith"s) were silently merged into one profile, with no human ever
+seeing it, directly contradicting the module's own "never auto-merge on an uncertain match"
+principle. Worth noting: `LocalFolderChannelAdapter` never populates email/phone at all today, so
+every real match in the current pipeline was already name-only. **Fixed:** a name match, however
+exact, is now always `AMBIGUOUS`, never `MERGED_INTO_EXISTING` -- only email/phone can drive an
+automatic merge. Separately, email/phone comparison was exact-string (case-sensitive, no
+formatting normalization) -- `Elizabeth.Windsor@Example.com` vs `elizabeth.windsor@example.com`, or
+`+1 (555) 123-4567` vs `15551234567`, silently created two profiles for one real person. **Fixed:**
+both are now normalized before comparison (email case-folded; phone reduced to digits only).
+
+**Resume-parsing correctness (`intake_extraction/extraction.py`):** a section header word
+appearing as the last word of an ordinary prose line with no trailing punctuation (e.g. a summary
+line ending "...continuous learning and education") satisfied `keyword + optional colon + newline`
+just as validly as a real standalone header, silently absorbing the real section that followed into
+the wrong field. **Fixed:** headers are now anchored to the start of a line, with a bounded
+two-word prefix allowance so real subheading-style lines (e.g. "Adult Care Experience", already
+relied on by this module's own real-world-template tests) still work.
+
+**Injection screening (`intake_extraction/injection_screening.py`):** the hidden-white-text
+pattern had no distance bound -- *any* two white-color CSS mentions anywhere in a whole document
+(not just a genuinely hidden span) bridged everything between them and got stripped, destroying
+real, unrelated resume content that was never actually hidden. **Fixed:** bounded the match to a
+realistic hidden-payload length (300 characters) rather than the whole document.
+
+**Text-log integrity (`intake_extraction/text_extraction_log.py`):** candidate-supplied text was
+written verbatim, unescaped, using a fixed/guessable delimiter -- a resume embedding that exact
+separator sequence could forge what looks like a second, convincing log entry attributed to a fake
+candidate/date. **Fixed:** every line of the untrusted text is now indented, so a forged header
+can't start at column 0 the way a real one does. (This is the human-review text log, not the
+compliance-relied-upon `governance_audit` trail -- see the existing entry on this file.)
+
+**Scoring determinism (`scoring_engine/models.py`, `skill_ontology.py`):** `nan < 0` is `False`, so
+a NaN `years_of_experience` passed `CandidateProfile`'s validation and silently poisoned the whole
+downstream score (`total_score=nan`) with no exception anywhere -- a direct violation of FR-9's
+determinism guarantee. **Fixed:** explicit `math.isnan()` check. Separately, `IdentitySkillOntology`
+(the production default until Module 4 ships) claimed whitespace-insensitivity but only
+`.strip()`ped the ends, not internal runs -- "Team  Leadership" (doubled internal space) wrongly
+failed to match "Team Leadership", a plausible false-negative must-have rejection against real,
+irregularly-spaced OCR/PDF-extracted text. `SynonymMapSkillOntology` had the same internal-
+whitespace gap, plus a silent-overwrite bug: a later synonym group sharing a term with an earlier
+one silently broke the earlier group's synonymy with no error. **Fixed:** normalization now
+collapses internal whitespace too, and an overlapping group now raises instead of silently
+corrupting the earlier mapping.
+
+**JRP storage (`scoring_engine/jrp_repository.py`):** `save()` had no version-monotonicity check --
+accidentally saving an older/duplicate version silently overwrote a newer one, with only a forensic
+(not preventive) audit trail; any candidate scored afterward was silently scored against stale
+criteria. Separately, `save()` wrote to the store *before* audit-logging, so a failure recording the
+audit event still left the new JRP live with no corresponding audit entry -- undermining "every JRP
+change is audit-logged." **Fixed:** version must now strictly increase (else `ValueError`), and the
+audit log is written before the store, so a failure leaves nothing changed.
+
+**Fairness ontology (`fairness_compliance/skill_ontology_store.py`):** the same silent-overwrite gap
+as `SynonymMapSkillOntology` above -- a routine ontology edit could silently make a JD requiring
+"C#" stop matching a candidate who listed "CSharp", with zero visibility into why. Same fix
+(overlap raises instead of silently corrupting).
+
+**Interview questions (`ai_content/interview_questions.py`):** when every dimension already
+cleared the same threshold (e.g. every dimension a strength), the strongest/weakest fallback could
+still pick a dimension that already got the *opposite*-angle question, producing a self-
+contradictory pair ("you scored strongly on X" and "your profile shows a gap in X" about the same
+X). **Fixed:** the fallback is now skipped (not forced) when there's genuinely nothing left in the
+opposite direction to probe.
+
+**CLI error handling (`cli.py`):** an `--audit-db` path that exists but isn't a SQLite file, or is a
+SQLite file with an incompatible schema, raised an uncaught `sqlite3` exception -- a raw traceback
+(the incompatible-schema case surfaced only later, mid-pipeline, since `CREATE TABLE IF NOT EXISTS`
+silently no-ops against an existing table). **Fixed:** both are now caught and reported as a clean,
+actionable error with a non-zero exit code.
+
+**JRP editor (`jrp_editor/app.py`) -- CRITICAL:** every per-dimension widget (weight/curve/
+required-skills/etc.) used a fixed `key=`. Once a keyed Streamlit widget is instantiated, only
+`st.session_state[key]` -- never a later `value=` argument on a subsequent rerun -- determines what
+it displays (confirmed directly via Streamlit's `AppTest` harness). Loading an existing JRP file, or
+switching the weight-template dropdown, updated the plain `weighted_criteria` list and showed a
+green "Loaded"/"Weights reset" confirmation -- while every widget kept silently showing the
+*previous* JRP's stale values underneath. HR editing what they believed was the loaded JRP was
+actually still editing the old one, with a false-positive success message telling them otherwise.
+**Fixed:** loading a file or switching templates now writes each row's values directly into the
+widgets' own session_state keys before they render, which is what Streamlit's own widget model
+requires for this to work; the redundant `value=`/`index=` arguments were removed to match
+Streamlit's own recommended pattern (their presence alongside a pre-set session_state key produced
+a policy warning). Regression tests use `AppTest` and are skipped (not failed) when the optional
+`ui` extra isn't installed.
+
+## Security + logic review, round 4 (2026-07-22): six more real bugs, mostly regressions from
+## today's must-have-semantics change
+
+Three parallel reviews (scoring-engine internals, fairness_compliance/ai_content, intake_extraction
++cli+jrp_editor), each specifically briefed to scrutinize today's `engine.py` must-have rewrite for
+regressions, every finding reproduced against the real code before fixing.
+
+**Root cause found independently by two reviews:** `Score.failed_must_have_label` (singular
+`str | None`) could only ever name the FIRST failing must-have criterion, even when several failed
+-- silently hiding the rest from both `cli.py`'s report and `fairness_compliance/
+explainability.py`'s candidate-facing explanation (FR-25). This directly undercut today's own
+spec-revision goal ("HR sees the whole profile before deciding") with a same-day regression: a
+candidate failing 3 must-haves showed only 1. **Fixed:** renamed to `failed_must_have_labels: tuple
+[str, ...]` (`scoring_engine/models.py`); `engine.py`'s `score()` now collects every failing
+criterion, not just the first (`next(...)` -> a generator collected in full); `explainability.py`
+and `cli.py` both render the full set, joined, instead of a single label.
+
+**`cli.py`'s ranked report -- a disqualified candidate could rank #1 as "high_match" with the
+must-have failure easy to miss on a skim.** Before today's `engine.py` change, a failed must-have
+always forced `total_score=0.0`, so disqualified candidates sorted to the bottom automatically; that
+invariant disappeared once the score is always fully computed. A candidate failing one must-have
+but excellent on every weighted dimension can legitimately score 100/high_match (this is the
+*intended* new behavior per SOP 2.2.2/2.2.4 -- the score must not be suppressed), but the report
+gave no visual distinction beyond the existing per-row "FAIL: ..." text in the last column. **Fixed:**
+sort order is unchanged (score-only ranking matches "used solely for ranking" in SOP 1.4/FR-13
+literally), but a disqualified row's tier now carries a trailing `*` and a footnote explains it when
+any row is disqualified -- a deliberately minimal fix, not a ranking-rule change, since the SOP does
+not specify must-have-passed-first ordering.
+
+**`scoring_engine/profile_adapter.py:45` crashed the whole candidate (and the whole CLI batch, no
+exception boundary around per-candidate scoring in `cli.py`) on an oversized digit run before
+"years."** `float(max(int(m) for m in explicit_matches))` -- `int()` parses an arbitrarily long
+digit run fine, but the surrounding `float()` conversion raises `OverflowError` on it (garbled OCR,
+copy-paste artifact, or adversarial input -- same untrusted-input threat model already defended
+elsewhere). **Fixed:** bounded the regex to 1-3 digits (`\d{1,3}`), which both prevents the crash
+and stops an absurd figure from ever being treated as literal.
+
+**`ai_content/red_flags.py`'s gap and inconsistency detectors silently dropped every match after
+the first.** `_detect_employment_gap`/`_detect_inconsistency` both `return`ed on the first hit inside
+their loop; `detect_red_flags` calls each detector exactly once, so a resume with two independent
+employment gaps, or two independent overlapping-date pairs, only ever surfaced one -- the second was
+never merged into the first's description, just silently gone. **Fixed:** both now collect every
+match into a tuple (`_detect_employment_gaps`/`_detect_inconsistencies`), and `detect_red_flags`
+extends its flag list from all of them.
+
+**`intake_extraction/dedup.py`'s `_compare()` could still auto-merge two different people, via a
+different vector than round 3's name-only fix.** The truthiness guard checked the *raw*
+phone/email string was non-empty, then compared *normalized* values for equality -- so two
+different people whose raw phone/email are non-empty punctuation-only garbage that both normalize
+to `""` (e.g. phone `"--"` vs `"()"` , or email `"   "` vs `"\t"`) collided and merged with no human
+review, the same anti-pattern round 3 targeted. **Fixed:** the truthiness check now runs on the
+*normalized* value, not the raw one.
+
+**`jrp_editor/app.py`'s must-have criteria table had zero columns on every brand-new JRP.**
+`st.data_editor(st.session_state.must_have, ...)` was passed a bare Python list; Streamlit infers a
+data_editor's schema from the data it's given, and none of the 5 weight-template presets seed a
+must-have row, so the common case (`[]`) produced a table with no `kind`/`label`/`required_skill`/
+`minimum_years` columns at all -- confirmed via the widget's serialized Arrow schema through
+`AppTest` (`"columns": []`). HR had no way to add a must-have criterion through the form in that
+state. **Fixed:** now passes a `pandas.DataFrame(st.session_state.must_have, columns=[...])` with
+an explicit column list, so the schema is defined even with zero rows; also updated the section's
+caption, which still described the pre-revision "no score at all" gating behavior. Added a `pandas`
+mypy override (same `ignore_missing_imports`/`follow_imports=skip` shape as the existing `streamlit`
+override) since `app.py` now imports it directly.
+
+261 tests (254 -> 261; seven new regression tests -- one for the multi-failure fix, two each for
+the red-flags and dedup fixes, one each for profile_adapter and jrp_editor; the ranking-display fix
+is a report-formatting change with no separate assertion beyond the existing `test_cli.py`
+coverage); ruff/mypy clean.
+
+## Spec revision (2026-07-22): must-have gating semantics changed in the source SOP
+
+The user supplied an updated source document, `HR_Digital_Employee_Blueprint (2).docx`. Diffing it
+against the backup Word keeps of the previous save (`HR_Digital_Employee_Blueprint (2).backup.docx`,
+also dated 2026-07-22) showed exactly one substantive change, spanning SOP §2.2.2 and §2.2.4: a
+failed must-have criterion used to disqualify the candidate outright with no weighted score
+computed; the revision changes this so the weighted score is *always* computed, and a failed
+must-have is flagged alongside the result instead of replacing it -- HR sees the full profile before
+deciding, and the system never auto-rejects. Everything else in the document is byte-for-byte
+identical in content to the version `requirement.md`/`design.md` were originally built from
+(confirmed by extracting both `.docx` files' `word/document.xml` and diffing the paragraph text).
+
+**Fixed to match:** `scoring_engine/engine.py`'s `score()` -- removed the early-return path that
+short-circuited with `total_score=0.0`, `tier=LOW_MATCH`, `breakdown=()` on the first failed
+must-have; must-have evaluation and weighted-dimension scoring now both always run, and
+`passed_must_have`/`failed_must_have_label` are set from whichever (if any) must-have criterion
+failed, alongside the real score/tier/breakdown. `fairness_compliance/explainability.py`'s
+`explain_score()` used to return an empty-breakdown explanation replacing the score entirely on a
+must-have failure; it now appends the failure reason to the full score explanation instead, since a
+candidate requesting an explanation (FR-25) is entitled to see the complete basis for their result,
+not just the reason they were flagged. Updated `requirement.md` FR-7, `design.md` §3.4,
+`module-2-scoring-engine.md` §4/§7, and `test.md` T2.3/TE2E.2 to state the new semantics explicitly
+(FR-7 previously only said criteria are tagged must-have/weighted, not what happens on failure).
+Two tests encoded the old semantics as assertions and were rewritten against hand-verified numbers
+rather than loosened: `test_t2_3_...` (`tests/scoring_engine/test_engine.py`) and
+`test_explanation_for_a_must_have_failure_...` (`tests/fairness_compliance/test_explainability.py`).
+No other production code depended on the old short-circuit behavior (checked via a repo-wide grep
+for `passed_must_have`/`failed_must_have_label` usage) -- `cli.py`'s report printer and
+`ai_content`'s interview-question/red-flag generation already treated `Score` fields generically and
+needed no change.
+
+## Security + logic review, round 5 (2026-07-22): a test-coverage/architectural audit plus six
+## more real bugs found and fixed
+
+Three parallel reviews: (1) a test.md coverage-gap and architectural-invariant audit (rather than
+another "find bugs in file X" sweep), (2) an end-to-end adversarial walkthrough chaining real
+objects across module boundaries with boundary/Unicode/malformed inputs, (3) a fresh deep sweep of
+`governance_audit`, `manual_review_queue.py`, `channel_adapters.py`, `ocr.py`/`pdf_text.py`, and
+`jrp_editor/config_builder.py` -- files earlier rounds touched only in passing. Every finding
+reproduced against real code before fixing.
+
+**Most consequential: `extraction.py`'s section-header regex was English-keyword-only, silently
+violating SOP 2.1.1's own explicit consistency guarantee.** Confirmed: an identical candidate
+(same skills/years/degree/projects) scored 60.0/Mid Match with plain-English headers but
+0.0/Low Match with Chinese headers -- every field went `UNVERIFIED` since "技能"/"工作经验"/
+"教育背景" never matched. This isn't a hypothetical edge case -- SOP 2.1.1 explicitly requires
+validated accuracy on "mixed Chinese-English text," and this system's own user base is Hong
+Kong-based. **Fixed:** each of the four section-header patterns now matches its Chinese
+equivalent(s) (技能/专业技能, 项目/项目经历, 工作经验/工作经历/从业经历, 教育背景/学历), plus a
+bilingual form stating both languages on one line (e.g. "Skills · 技能"), common on HK bilingual
+resume templates. Two new regression tests (`test_t1_12_chinese_section_headers_...`,
+`test_t1_12_bilingual_section_headers_...`).
+
+**`cli.py`'s report crashed outright on a CJK or emoji candidate name under a legacy console
+encoding.** Reproduced: `UnicodeEncodeError` under simulated Windows cp1252, aborting the whole
+report mid-batch. **Fixed:** `main()` now reconfigures `sys.stdout` with `errors="replace"` so an
+unencodable character degrades to `?` instead of crashing the process.
+
+**`cli.py`'s report could have a candidate label forge an extra, convincing-looking row.** A
+label containing a newline plus text shaped like a table row (e.g. from a future real Email/Teams
+adapter's message-envelope display name -- the current local-folder stub derives labels from
+filenames, which can't contain newlines, so this isn't reachable today, but the field is
+documented as eventually coming from untrusted envelope data) rendered as a second, standalone
+entry. **Fixed:** newlines are stripped from the label at the point `_print_report` builds each
+row.
+
+**`jrp_config.py` had the same "parses fine, crashes later mid-scoring" gap round 2 already fixed
+for sibling fields, missed for two others.** `required_education_level: 5` (non-string) crashed
+with an unrelated `AttributeError` (`'int' object has no attribute 'upper'`); `required_skills:
+[123, 456]` (non-string elements) loaded with zero validation and crashed later, mid-scoring, the
+moment skill-ontology matching called a string method on one. **Fixed:** both now raise a clean
+`JRPConfigError` at load time.
+
+**`channel_adapters.py` had a second TOCTOU race, one level up from the one round 2 fixed.** Round
+2 wrapped the per-*file* read in `try/except OSError`; nothing guarded the folder-level
+`exists()`-then-`iterdir()` gap. Reproduced: the watched folder vanishing between those two calls
+(a concurrent cleanup job, an unmounted network share) raised an uncaught `FileNotFoundError` out
+of `fetch_new_submissions()`. **Fixed:** the listing itself is now wrapped the same way, treating a
+vanished folder as "no new submissions this cycle."
+
+**The `ai_content`/`fairness_compliance` architectural-invariant test could be defeated by
+`dataclasses.replace`.** `test_ai_content_never_constructs_a_score` was a literal `"Score("`
+substring search. Confirmed: `dataclasses.replace(score, total_score=100.0, tier=Tier.HIGH_MATCH)`
+genuinely builds a manipulated `Score` (executed: LOW_MATCH/12.0 -> HIGH_MATCH/100.0) while
+containing zero occurrences of the text `"Score("` -- a green build on code flatly violating FR-9.
+There was also no equivalent check at all for `fairness_compliance`, despite `explainability.py`
+being equally documented as read-only. **Fixed:** rewrote the check to be AST-based, flagging both
+direct `Score(...)`/`x.Score(...)` calls and any `dataclasses.replace(...)` call whose keyword
+arguments touch a Score-specific field name (`total_score`, `passed_must_have`,
+`failed_must_have_labels`, `scoring_engine_version`) -- narrow enough to not false-positive on this
+package's own legitimate `dataclasses.replace` uses on unrelated types (`AccessRequest`,
+`ConsentRecord`) or on ordinary string `.replace()` calls, both confirmed via dedicated tests
+against the checker itself. Added the missing `fairness_compliance` equivalent.
+
+**Also fixed:** `cli.py`'s report displayed `total_score` at 1 decimal, so a value like 79.95
+(correctly `mid_match`) could print as "80.0" sitting next to `mid_match*`, looking like a tier-
+classification bug on a skim -- now displayed at 2 decimals, matching `engine.py`'s own rounding
+precision.
+
+**Findings deliberately documented rather than code-patched this round** (real, demonstrated, but
+either a bigger design change than this pass's scope or a genuine judgment call -- same category as
+`anchoring.py`'s hallucination gap):
+- `fairness_compliance.SkillOntologyRepository` is a live, unversioned, mutable object designed to
+  be wired directly into `ScoringEngine` by reference (T4.13). Confirmed: mutating it via its
+  normal `add_synonym_group()` API between two identical `score()` calls (same profile/JRP/
+  versions) changed `total_score` from 0.0 to 100.0 with nothing on `Score` recording which
+  ontology snapshot produced it (unlike `jrp_version`/`scoring_engine_version`/`parser_version`) --
+  contradicting `engine.py`'s own "pure function" docstring. A real fix means either versioning the
+  ontology and stamping that version on `Score` (more model churn, on top of this session's
+  `failed_must_have_labels` change) or freezing/snapshotting the ontology per scoring run; deferred
+  as a genuine design decision rather than rushed.
+- The "raw resume text never reaches an LLM" guarantee (FR-9/module-3 doc) is comment-only for
+  `ai_content/llm_provider.py`, not code-enforced the way the `Score`-construction wall is --
+  confirmed a `TemplateLLMProvider` fed a `SourcePassage` built from raw injected text will happily
+  embed it verbatim. Extending architectural-invariant enforcement to this input-flow direction
+  (as opposed to the output-flow check just strengthened above) is a larger design task.
+- `governance_audit/sqlite_audit_log.py` has no schema versioning (no `PRAGMA user_version`, no
+  migration path) -- `CREATE TABLE IF NOT EXISTS` is a silent no-op against a pre-existing file, so
+  a future column addition would break every previously-created database file the moment
+  `record()` is next called against it. Not a bug today (no column has actually changed yet); a
+  forward-looking gap, tracked here rather than built speculatively.
+- A handful of narrower test.md coverage gaps (T7.5's injection audit event logging the matched
+  regex pattern rather than the flagged content -- arguably the safer design, not necessarily a
+  defect; T1.8/T7.4's assertions checking less than what test.md's row promises; no test chaining a
+  failed-must-have `Score` into `ai_content`/`cli.py`'s disqualified-row marker end-to-end; two
+  must-have criteria sharing one `.label` but failing for different reasons rendering
+  indistinguishably as `"FAIL: X; X"`) -- noted for a future test-hardening pass rather than
+  addressed individually here.
+
+272 tests (261 -> 272; eleven new regression tests); ruff/mypy clean.
+
 ## What this draft does NOT cover yet
 
 This is a rough first draft of Wave 1 (Module 1: Intake & Extraction, the minimum of Module 7:

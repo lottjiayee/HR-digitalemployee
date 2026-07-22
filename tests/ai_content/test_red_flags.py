@@ -85,6 +85,44 @@ def test_no_fabricated_gap_flag_from_a_reversed_typo_date_range() -> None:
     assert not any(f.kind is RedFlagKind.EMPLOYMENT_GAP for f in flags)
 
 
+def test_two_separate_employment_gaps_are_both_flagged_not_just_the_first() -> None:
+    # Regression: `_detect_employment_gap` returned on the first gap found in the loop, so a
+    # candidate with two genuinely separate unexplained gaps only ever had the earlier one
+    # surfaced -- the second was silently dropped, not merged, just gone.
+    resume_text = (
+        "Working Experience:\n"
+        "2010-2012 Engineer at Alpha Corp\n"
+        "2014-2015 Engineer at Beta Corp\n"
+        "2018-2020 Engineer at Gamma Corp\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    gap_flags = [f for f in flags if f.kind is RedFlagKind.EMPLOYMENT_GAP]
+    assert len(gap_flags) == 2
+    assert any("2012" in f.description and "2014" in f.description for f in gap_flags)
+    assert any("2015" in f.description and "2018" in f.description for f in gap_flags)
+
+
+def test_two_separate_overlapping_date_pairs_are_both_flagged_not_just_the_first() -> None:
+    # Regression: `_detect_inconsistency` returned on the first overlapping pair found, silently
+    # dropping any additional, independent overlap elsewhere in the same resume.
+    resume_text = (
+        "Working Experience:\n"
+        "2010-2012 Engineer at A\n"
+        "2011-2013 Engineer at B\n"
+        "2015-2017 Engineer at C\n"
+        "2016-2018 Engineer at D\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    inconsistency_flags = [f for f in flags if f.kind is RedFlagKind.INCONSISTENCY]
+    assert len(inconsistency_flags) == 2
+
+
 def test_a_clean_consistent_resume_produces_no_flags() -> None:
     resume_text = (
         "Skills:\nPython\nSQL\n\nWorking Experience:\n2018-2023 Engineer at TechCorp\n"
