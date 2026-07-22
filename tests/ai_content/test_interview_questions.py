@@ -1,0 +1,140 @@
+"""Tests for interview question generation (FR-12, test.md T3.3)."""
+
+from __future__ import annotations
+
+from hr_digital_employee.ai_content.interview_questions import generate_interview_questions
+from hr_digital_employee.ai_content.models import QuestionAngle
+from hr_digital_employee.intake_extraction.extraction import ExtractionService
+from hr_digital_employee.scoring_engine.engine import ScoringEngine
+from hr_digital_employee.scoring_engine.models import (
+    JRP,
+    Dimension,
+    EducationLevel,
+    MatchingCurve,
+    WeightedCriterion,
+    WeightTemplate,
+)
+from hr_digital_employee.scoring_engine.profile_adapter import build_candidate_profile
+
+_JRP = JRP(
+    jrp_id="role-1",
+    role_name="Backend Engineer",
+    version=1,
+    weight_template=WeightTemplate.GENERAL,
+    weighted_criteria=(
+        WeightedCriterion(
+            dimension=Dimension.MANDATORY_SKILLS,
+            weight=40.0,
+            curve=MatchingCurve.LINEAR,
+            required_skills=("Python", "SQL"),
+        ),
+        WeightedCriterion(
+            dimension=Dimension.EXPERIENCE_TENURE,
+            weight=30.0,
+            curve=MatchingCurve.LINEAR,
+            required_years=10.0,
+        ),
+        WeightedCriterion(
+            dimension=Dimension.EDUCATIONAL_LEVEL,
+            weight=15.0,
+            curve=MatchingCurve.LINEAR,
+            required_education_level=EducationLevel.BACHELOR,
+        ),
+        WeightedCriterion(
+            dimension=Dimension.PROJECT_RELEVANCE,
+            weight=15.0,
+            curve=MatchingCurve.LINEAR,
+            required_project_count=2,
+        ),
+    ),
+)
+
+
+def test_t3_3_questions_cover_verification_gap_and_behavioral_angles() -> None:
+    resume_text = (
+        "Skills:\nPython\nSQL\n\n"
+        "Projects:\nBuilt a data pipeline\n\n"
+        "Working Experience:\n2 years at TechCorp\n\n"  # well below the 10-year requirement
+        "Education:\nBachelor of Computer Science\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+    profile = build_candidate_profile(extracted)
+    score = ScoringEngine().score(profile, _JRP, extracted.parser_version)
+
+    questions = generate_interview_questions(score, extracted)
+
+    angles = {q.angle for q in questions}
+    assert QuestionAngle.VERIFICATION in angles  # Mandatory Skills: 2/2, strong
+    assert QuestionAngle.GAP in angles  # Experience Tenure: 2/10, weak
+    assert QuestionAngle.BEHAVIORAL in angles  # always included
+
+
+def test_all_three_angles_are_covered_even_when_every_dimension_is_mid_range() -> None:
+    # Regression test: every dimension scoring in the (LOW_SCORE_THRESHOLD, HIGH_SCORE_THRESHOLD)
+    # "dead zone" used to produce zero VERIFICATION and zero GAP questions -- a real risk since
+    # that band covers the entire Mid Match tier (60-79%), not a rare edge case. Uses a dedicated
+    # JRP tuned so every dimension's ratio lands strictly inside (0.5, 0.85), which two required
+    # skills alone can't produce (0/2, 1/2, 2/2 only) -- hence the wider requirements here.
+    mid_range_jrp = JRP(
+        jrp_id="role-2",
+        role_name="Backend Engineer",
+        version=1,
+        weight_template=WeightTemplate.GENERAL,
+        weighted_criteria=(
+            WeightedCriterion(
+                dimension=Dimension.MANDATORY_SKILLS,
+                weight=40.0,
+                curve=MatchingCurve.LINEAR,
+                required_skills=("Python", "SQL", "JavaScript"),  # candidate has 2/3 -> 0.667
+            ),
+            WeightedCriterion(
+                dimension=Dimension.EXPERIENCE_TENURE,
+                weight=30.0,
+                curve=MatchingCurve.LINEAR,
+                required_years=10.0,  # candidate has 7 -> 0.7
+            ),
+            WeightedCriterion(
+                dimension=Dimension.EDUCATIONAL_LEVEL,
+                weight=15.0,
+                curve=MatchingCurve.LINEAR,
+                required_education_level=EducationLevel.MASTER,  # candidate has Bachelor -> 0.75
+            ),
+            WeightedCriterion(
+                dimension=Dimension.PROJECT_RELEVANCE,
+                weight=15.0,
+                curve=MatchingCurve.LINEAR,
+                required_project_count=3,  # candidate has 2 -> 0.667
+            ),
+        ),
+    )
+    resume_text = (
+        "Skills:\nPython\nSQL\n\n"
+        "Projects:\nBuilt a data pipeline\nLed a small team\n\n"
+        "Working Experience:\n7 years at TechCorp\n\n"
+        "Education:\nBachelor of Computer Science\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+    profile = build_candidate_profile(extracted)
+    score = ScoringEngine().score(profile, mid_range_jrp, extracted.parser_version)
+
+    # Confirm the premise: nothing crosses either threshold on its own.
+    assert all(0.5 < r.curve_score < 0.85 for r in score.breakdown)
+
+    questions = generate_interview_questions(score, extracted)
+
+    angles = [q.angle for q in questions]
+    assert QuestionAngle.VERIFICATION in angles
+    assert QuestionAngle.GAP in angles
+    assert QuestionAngle.BEHAVIORAL in angles
+
+
+def test_behavioral_question_references_a_real_project_when_available() -> None:
+    resume_text = "Skills:\nPython\n\nProjects:\nBuilt an internal analytics dashboard\n"
+    extracted = ExtractionService().extract(resume_text)
+    profile = build_candidate_profile(extracted)
+    score = ScoringEngine().score(profile, _JRP, extracted.parser_version)
+
+    questions = generate_interview_questions(score, extracted)
+
+    behavioral = next(q for q in questions if q.angle is QuestionAngle.BEHAVIORAL)
+    assert "Built an internal analytics dashboard" in behavioral.text

@@ -1,6 +1,6 @@
 # Module 3: AI-Assisted Content Generation
 
-**Status:** Not Started
+**Status:** In Progress — summary/questions/red-flags built, rough draft (see md/progress.md)
 **Design source:** [design.md](../design.md) §3.5, §1.1
 **Requirement source:** [requirement.md](../requirement.md) FR-10, FR-12
 
@@ -59,16 +59,21 @@ see Module 6).
 
 ## 7. Progress Checklist
 
-- [ ] LLM provider selected and API integration built
-- [ ] Prompt/pipeline: structured-input-only enforcement (no raw resume text passthrough)
-- [ ] Summary generation (3–5 sentences, factual)
-- [ ] Sentence-level source anchoring + drop-unanchored-sentence logic
-- [ ] Interview question generation (verification / gap / behavioral)
-- [ ] Red-flag detection (inconsistencies, keyword-stuffing, job-change patterns)
-- [ ] Red-flag framing reviewed against Module 4 fairness mitigations (gaps = neutral, not penalty)
-- [ ] Model/prompt version stamping on generated content
-- [ ] Monthly hallucination-audit export/sampling hook
-- [ ] Hallucination-rate threshold defined and suspension logic wired
+- [ ] LLM provider selected and API integration built — stubbed with a deterministic offline
+      `TemplateLLMProvider`; real vendor choice still open (design.md §10.2, ASSUMPTIONS.md)
+- [x] Prompt/pipeline: structured-input-only enforcement (no raw resume text passthrough) —
+      enforced by the function signatures themselves, no raw-text parameter exists anywhere
+- [x] Summary generation (3–5 sentences, factual)
+- [x] Sentence-level source anchoring + drop-unanchored-sentence logic
+- [x] Interview question generation (verification / gap / behavioral)
+- [x] Red-flag detection (inconsistencies, keyword-stuffing, job-change patterns)
+- [x] Red-flag framing reviewed against Module 4 fairness mitigations (gaps = neutral, not penalty)
+- [x] Model/prompt version stamping on generated content — applies to the LLM-generated
+      `CandidateSummary` only; interview questions and red flags are deterministic rule-based
+      logic with no model/prompt to version (see ASSUMPTIONS.md)
+- [x] Monthly hallucination-audit export/sampling hook
+- [ ] Hallucination-rate threshold defined and suspension logic wired — suspension mechanism is
+      built and tested; no agreed threshold number exists yet to default it to (ASSUMPTIONS.md)
 
 ## 8. Testing
 

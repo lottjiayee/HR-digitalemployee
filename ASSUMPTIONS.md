@@ -333,15 +333,181 @@ a YAML file and running one command -- without prematurely deciding the frontend
 question design.md §10.4 leaves open, and without building a backend API server (none exists in
 this codebase yet) just to serve a UI that isn't designed yet either.
 
+## AI-Assisted Content Generation: the second LLM provider
+
+**Status:** Stubbed — pending human decision (design.md §10.2, `md/progress.md` §2a)
+**What was built:** `LLMProvider` protocol (`ai_content/llm_provider.py`) with one method,
+`generate_summary_sentences()`. `TemplateLLMProvider` implements it deterministically and
+offline: each non-empty source passage becomes one factual sentence built directly from its own
+text, so every sentence is anchorable by construction (no hallucination risk from the stub itself).
+**What a real implementation must satisfy:** same protocol, backed by a real single-shot LLM API
+call (Claude, OpenAI, Azure OpenAI, or other — not yet chosen); its output still passes through
+`anchoring.py`'s verification before reaching a `CandidateSummary`, exactly like the stub's does.
+**Why this default:** lets every other piece of Module 3 (anchoring/drop-unanchored logic, question
+generation, red-flag detection, version stamping, the hallucination-audit hook) be built and tested
+now without an API key, network call, or vendor commitment.
+
+## AI-Assisted Content Generation: sentence-anchoring threshold
+
+**Status:** Judgement call, not a spec number
+**What was built:** `anchoring.py`'s `MIN_PASSAGE_COVERAGE = 0.5` -- a sentence is anchored to a
+source passage if at least half of that passage's significant (non-stopword, length >= 3) words
+appear in the sentence. Deliberately checks *passage-into-sentence* coverage, not the reverse, so a
+sentence's own framing/connector words (which a real, paraphrasing LLM would add more of than this
+codebase's verbatim-leaning template) don't dilute the match.
+**What a real implementation must satisfy:** FR-10's "every sentence carries a source-passage
+anchor; unanchored sentences are dropped" -- the exact coverage threshold isn't specified by the
+SOP and may need tuning once a real (paraphrasing) LLM is in the loop.
+**Why this default:** 0.5 is generous enough that the template stub's own boilerplate wording
+never causes a false negative (see `tests/ai_content/test_summary_generator.py`), while still
+catching a sentence introducing content absent from every passage (T3.2).
+
+## AI-Assisted Content Generation: hallucination-rate suspension threshold
+
+**Status:** Flagged rather than stubbed — this is a real-world decision, not a code gap
+**What was built:** `hallucination_audit.is_suspension_triggered(hallucination_rate, threshold)`
+-- the *mechanism* is real and tested, but it takes `threshold` as a required argument with no
+default.
+**Why flagged rather than stubbed:** module-3 doc §6 says the SOP references "the agreed
+threshold" without ever giving a number. Every other default in this codebase (tier thresholds,
+Educational Level weight guidance, buffered-curve constants) ships because the SOP or GLOSSARY
+gives a concrete figure to ship; this one doesn't, so inventing one here would be presenting a
+guess as policy. `HallucinationAuditLog.sample()` (the actual monthly-audit query/export hook
+module-3 doc §4 asks this module to support) is fully built and usable today regardless.
+
+## AI-Assisted Content Generation: only the summary goes through `LLMProvider`
+
+**Status:** Interpretation call, now documented (found during self-review, wasn't written down
+the first time)
+**What was built:** `SummaryGenerationService` is the only piece of Module 3 that calls
+`LLMProvider.generate_summary_sentences()`. `interview_questions.py` and `red_flags.py` are pure,
+deterministic Python (score-breakdown targeting; regex-based date/keyword heuristics) — neither
+imports `llm_provider` at all, and neither has a `model_version`/`prompt_version` field, unlike
+`CandidateSummary`.
+**Why this reading:** design.md §3.5 describes all three outputs (summary, questions, red flags)
+as coming from "a standard LLM API call," which read literally would put all three behind
+`LLMProvider`. This draft narrowed that: FR-10's anchoring requirement exists specifically because
+free-text summary generation is genuinely hallucination-prone, but "which score dimensions are
+strong/weak" and "are there overlapping employment dates" are already fully answered by Module 2's
+structured `Score.breakdown` and Module 1's structured text — asking an LLM to *re-derive* that
+from scratch would be strictly less reliable and less auditable than reading the structured data
+directly, and neither FR-12 nor module-3 doc §4 requires anchoring for questions/flags the way
+FR-10 does for the summary. A real implementation could still route questions/flags through an
+LLM for more natural phrasing; this draft prioritized determinism where determinism was available.
+**What a real implementation must satisfy:** FR-12 (interview questions, red-flag hints) — both are
+functionally satisfied by the deterministic approach; a future revision replacing them with LLM
+calls would need to add the same anchoring discipline FR-10 already requires of the summary.
+
+## AI-Assisted Content Generation / Scoring Engine: a duplicated year-range regex
+
+**Status:** Accepted duplication, now documented (found during self-review)
+**What was built:** `ai_content/red_flags.py` and `scoring_engine/profile_adapter.py` each define
+their own, byte-for-byte identical `_YEAR_RANGE_PATTERN = re.compile(r"\b((?:19|20)\d{2})\s*-\s*
+(?:19|20)\d{2})\b")` rather than sharing one implementation.
+**Why this default:** matches the same reasoning as `SkillOntologyRepository`'s zero-import design
+(see below) — `ai_content` and `scoring_engine` are meant to stay decoupled per FR-9's separation
+principle, and this project's modules are each intentionally self-contained (Module 1 and Module 2
+don't share a text-parsing utility module either). The regex is small enough that duplicating it
+costs less than introducing a shared-utility module both packages would depend on. If a third
+module needs the same pattern, that's the point to extract it — to a shared, dependency-free
+location neither `ai_content` nor `scoring_engine` needs the other to reach.
+
+## Fairness & Compliance: statistical significance test
+
+**Status:** Resolved — one of module-4 doc §4's two acceptable options was picked
+**What was built:** `adverse_impact.standardized_difference_test()` -- a two-proportion z-test
+(`SIGNIFICANCE_Z_CRITICAL = 1.96`, the standard two-tailed p<0.05 critical value).
+**Why this choice over chi-square:** module-4 doc §4 accepts either "chi-square or standardized
+difference." A z-test needs only `math.sqrt`; computing an exact chi-square p-value would need
+scipy's inverse CDF (or a hand-rolled approximation) just to avoid a new dependency for a stub-era
+fairness check. The z-test is mathematically equivalent to a chi-square test for a 2x2 table at
+1 degree of freedom, so nothing is lost in rigor for the two-group case this module currently
+handles.
+
+## Fairness & Compliance: `SkillOntologyRepository` has zero import dependency on `scoring_engine`
+
+**Status:** A deliberate design choice, not a spec mandate
+**What was built:** `SkillOntologyRepository.resolves_same_skill(a, b)` (`fairness_compliance/
+skill_ontology_store.py`) has the exact method signature `scoring_engine.skill_ontology
+.SkillOntology` (a `Protocol`) requires. Because Python `Protocol`s are structural, a
+`SkillOntologyRepository` instance can be passed directly as `ScoringEngine`'s `skill_ontology`
+constructor argument with **no import of `scoring_engine` anywhere in `fairness_compliance`** --
+see `tests/fairness_compliance/test_skill_ontology_store.py`'s
+`test_t4_13_repository_satisfies_the_scoring_engines_skill_ontology_protocol_structurally`.
+**Why this default:** module-4 doc §4 says Module 4 "owns updates to the ontology; Module 2 never
+writes to it" -- describing a one-way *data* flow (Module 4 produces, Module 2 consumes). Making
+that a one-way *import* dependency too (rather than fairness_compliance importing scoring_engine
+just to wrap its stub ontology classes) keeps the two modules as loosely coupled as design.md's
+architecture calls for, and mirrors the one-directional invariant already enforced between
+`ai_content` and `scoring_engine` (`tests/test_architectural_invariants.py`). This is a nice-to-have
+this draft chose to build, not something md/prompt.md's non-negotiable constraints require.
+
+## Fairness & Compliance: jurisdiction detection vs. the strictest-default rule
+
+**Status:** Split — the default rule is real logic; detection itself is flagged, not stubbed
+**What was built:** `jurisdiction.resolve_jurisdiction()` implements module-4 doc §4's
+"default to strictest framework when jurisdiction is undetermined" rule in full (defaults to
+`Jurisdiction.EU_GDPR`). Actually *determining* a candidate's jurisdiction (from a declared
+address, IP geolocation, etc.) is not built.
+**Why flagged rather than stubbed:** jurisdiction detection needs real candidate-location data this
+codebase has no source for yet -- same category of gap as Module 1's malware scanning (needs real
+infrastructure/data, not fakeable as pure logic). The judgement call worth flagging on its own:
+ranking GDPR as "strictest" among PDPO/GDPR/PIPL is this draft's interpretation (GDPR Article 22's
+automated-decision rights are the most restrictive of the three baselines this system cites), not
+a ranking the SOP states explicitly.
+
+## Fairness & Compliance: access/correction request handling is a workflow skeleton
+
+**Status:** Stubbed — the request lifecycle is real; fulfillment against real candidate data is not
+**What was built:** `AccessRequestService` (`fairness_compliance/access_requests.py`) tracks a
+request through `received -> in_progress -> fulfilled`, audit-logging every transition (FR-26).
+**What a real implementation must satisfy:** actually locating and returning/correcting a
+candidate's held data -- which needs a real candidate-data store this codebase doesn't have yet
+(Module 1's `IdentityDedupService` holds only enough fields to dedupe, not a full PII record).
+**Why this default:** the request-tracking workflow (states, audit trail, who-requested-what) is
+real, testable process logic independent of which data store eventually backs it -- building that
+now doesn't need to wait on a storage decision.
+
+## Fairness & Compliance: retention scheduler and quarterly re-test scheduler
+
+**Status:** Flagged rather than stubbed — like malware scanning and the Scoring Engine's rollback
+hook, these need a real recurring-job scheduler, not just Python logic
+**What was built:** the pure eligibility checks (`retention.is_eligible_for_routine_deletion()`,
+`is_eligible_for_withdrawal_deletion()`) are real and tested. Nothing calls them on a recurring
+schedule, and nothing automatically re-triggers a four-fifths test on a quarterly cadence or on a
+JRP weight/must-have change (FR-20's "not only on a fixed calendar schedule" trigger).
+**Why flagged rather than stubbed:** module-4 doc §5 says this "coordinates with Module 7," which
+doesn't have a scheduler either yet -- there's no live infrastructure in this codebase for either
+module to hook a recurring job into. `_DAYS_PER_MONTH = 30` in `retention.py` is also a documented
+approximation (calendar-month arithmetic without a dependency like `dateutil`), not exact.
+
+## A stale docstring caught while building Module 3
+
+**Fixed 2026-07-22:** `ai_content/__init__.py` originally said "Must never import from
+scoring_engine," citing md/prompt.md §2 invariant 1. Invariant 1 is actually one-directional —
+`scoring_engine` must never import `ai_content`, and `ai_content` must never *construct* a `Score`
+— reading an existing `Score` for interview-question targeting is expected and required by
+module-3 doc's own Dependencies section. Corrected the docstring to state the real (one-way)
+constraint and pointed it at `tests/test_architectural_invariants.py`, which enforces it.
+
 ## What this draft does NOT cover yet
 
 This is a rough first draft of Wave 1 (Module 1: Intake & Extraction, the minimum of Module 7:
-Governance & Audit needed for Module 1 to log through it) plus a draft of Module 2: Scoring Engine
+Governance & Audit needed for Module 1 to log through it), Wave 2's Module 2: Scoring Engine
 (must-have gating, weighted/curve-adjusted dimension scoring, tier classification, JRP versioning +
-audit logging — all deterministic, no LLM/agent input anywhere in the module, per FR-9), plus a
-YAML-config JRP loader and a command-line bridge (`hr-digital-employee`) tying the two modules
-together end to end. **Not yet built:** manual-review SLA monitoring/alerting, incident routing,
-weekly operational review, Talent Pool Store, Candidate Feedback storage, one-round-one-version
-enforcement, the NFR-6 rollback hook, any real web UI/dashboard/API server (Module 5), and Modules
-3, 4, and 6 entirely (empty placeholder packages only, per `md/prompt.md` §5's repository layout).
-See `md/progress.md` for the authoritative checklist.
+audit logging — all deterministic, no LLM/agent input anywhere in the module, per FR-9), a
+YAML-config JRP loader and command-line bridge (`hr-digital-employee`) tying Modules 1 and 2
+together end to end, and Wave 3's Module 3: AI-Assisted Content Generation (summary generation with
+sentence-level anchoring, interview questions, red-flag detection — architecturally isolated from
+scoring per FR-9, enforced by `tests/test_architectural_invariants.py`) and Module 4: Fairness &
+Compliance (four-fifths adverse-impact testing with statistical corroboration, skill-ontology
+maintenance, consent capture, retention-eligibility checks, explainability, an access/correction
+request workflow).
+
+**Not yet built:** manual-review SLA monitoring/alerting, incident routing, weekly operational
+review, Talent Pool Store, Candidate Feedback storage, one-round-one-version enforcement, the
+NFR-6 rollback hook, the quarterly/on-change fairness re-test scheduler, jurisdiction detection,
+real candidate-data-store fulfillment for access/correction requests, any real web UI/dashboard/API
+server (Module 5, other than the temporary CLI bridge), and Module 6 entirely (empty placeholder
+package only, per `md/prompt.md` §5's repository layout). See `md/progress.md` for the
+authoritative checklist.

@@ -1,6 +1,6 @@
 # Module 4: Fairness & Compliance
 
-**Status:** Not Started
+**Status:** In Progress — adverse-impact testing + core services built, rough draft (see md/progress.md)
 **Design source:** [design.md](../design.md) §3.6
 **Requirement source:** [requirement.md](../requirement.md) FR-20–FR-23
 
@@ -74,24 +74,35 @@ Module 7 for the scheduled deletion/anonymization mechanics.)*
 
 ## 7. Progress Checklist
 
-- [ ] Voluntary demographic self-declaration collection (separate from application data)
-- [ ] Selection-rate calculation per protected-characteristic group, per JRP
-- [ ] Four-fifths rule check + flagging
-- [ ] Statistical significance corroboration (chi-square / standardized difference)
-- [ ] Pre-deployment back-test against historical/sample data for new/changed JRPs
-- [ ] Quarterly re-test scheduler for live JRPs
-- [ ] Re-test trigger on any JRP weight/must-have change (not calendar-only)
+- [ ] Voluntary demographic self-declaration collection (separate from application data) —
+      `DemographicRecord` modeled; no intake collection flow yet (Module 5's job)
+- [x] Selection-rate calculation per protected-characteristic group, per JRP
+- [x] Four-fifths rule check + flagging — `AdverseImpactTestingService` audit-logs every result
+      (flagged or passing), per md/prompt.md §2 invariant 5
+- [x] Statistical significance corroboration (chi-square / standardized difference) — two-proportion
+      z-test picked over chi-square to avoid a scipy dependency (ASSUMPTIONS.md)
+- [ ] Pre-deployment back-test against historical/sample data for new/changed JRPs — no
+      "deployment"/activation concept exists yet to gate
+- [ ] Quarterly re-test scheduler for live JRPs — needs Module 7's job infrastructure (not built)
+- [ ] Re-test trigger on any JRP weight/must-have change (not calendar-only) — same gap as above
 - [ ] Disparate-treatment review workflow (protected-characteristic/proxy check on JRP definitions)
-- [ ] PICS collection notice at intake (all channels)
-- [ ] Separate, unbundled talent-pool consent capture
-- [ ] 24-month retention auto-delete/anonymize job (coordinates with Module 7)
-- [ ] Consent-withdrawal → 30-day deletion workflow
-- [ ] Jurisdiction detection + default-strictest-framework logic (PDPO/GDPR/PIPL)
-- [ ] Skill-ontology/synonym mapping table + maintenance interface (consumed read-only by Module 2)
-- [ ] Explainability-on-request response generator (reads existing Matching Analysis only)
-- [ ] Access/correction request handling workflow
-- [ ] Feedback-to-scoring gate (blocks Module 7 feedback from reaching Module 2 without passing
-      this checklist's adverse-impact re-test first)
+- [x] PICS collection notice at intake (all channels)
+- [x] Separate, unbundled talent-pool consent capture
+- [ ] 24-month retention auto-delete/anonymize job (coordinates with Module 7) — eligibility check
+      built (`retention.py`), no recurring job to act on it
+- [ ] Consent-withdrawal → 30-day deletion workflow — eligibility check built, no job
+- [x] Jurisdiction detection + default-strictest-framework logic (PDPO/GDPR/PIPL) — only the
+      default-when-undetermined *rule*; real detection needs candidate-location data not available
+      yet (flagged, not stubbed — see ASSUMPTIONS.md)
+- [x] Skill-ontology/synonym mapping table + maintenance interface (consumed read-only by Module 2) —
+      `SkillOntologyRepository`, zero import dependency on `scoring_engine` (structural typing;
+      see ASSUMPTIONS.md)
+- [x] Explainability-on-request response generator (reads existing Matching Analysis only)
+- [x] Access/correction request handling workflow — request lifecycle only; no real candidate-data
+      store to fulfill against yet
+- [x] Feedback-to-scoring gate (blocks Module 7 feedback from reaching Module 2 without passing
+      this checklist's adverse-impact re-test first) — satisfied by absence: Module 7's Feedback
+      store isn't built yet, so no such code path can exist; revisit once it is
 
 ## 8. Testing
 

@@ -6,9 +6,18 @@ from hr_digital_employee.scoring_engine.engine import ScoringEngine
 from hr_digital_employee.scoring_engine.models import (
     JRP,
     CandidateProfile,
+    Dimension,
     DimensionResult,
     Score,
     Tier,
 )
 
-__all__ = ["JRP", "CandidateProfile", "DimensionResult", "Score", "ScoringEngine", "Tier"]
+__all__ = [
+    "JRP",
+    "CandidateProfile",
+    "Dimension",
+    "DimensionResult",
+    "Score",
+    "ScoringEngine",
+    "Tier",
+]

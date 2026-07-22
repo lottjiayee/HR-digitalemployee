@@ -13,8 +13,8 @@ Status values used throughout: `Not Started` → `In Progress` → `Blocked` →
 |---|---|---|---|---|
 | 1 | Intake & Extraction | In Progress — core pipeline built, rough draft | Real channel integration and structured-field splitting still stubbed (PDF byte-to-text extraction is real via `pypdf`; image OCR is real via local Tesseract, cloud OCR not chosen); malware scan and 200-resume validation not started | [module-1-intake-extraction.md](./modules/module-1-intake-extraction.md) |
 | 2 | Scoring Engine | In Progress — core scoring math + Module 1 adapter built, rough draft | Module 1 -> Module 2 profile adapter is a regex-heuristic stub (word-form numbers, open-ended date ranges not handled); skill ontology is an exact-match/synonym-map stub pending Module 4; one-round-one-version enforcement and NFR-6 rollback hook not started | [module-2-scoring-engine.md](./modules/module-2-scoring-engine.md) |
-| 3 | AI-Assisted Content Generation | Not Started | 2nd LLM provider not chosen (stubbed) | [module-3-ai-content-generation.md](./modules/module-3-ai-content-generation.md) |
-| 4 | Fairness & Compliance | Not Started | — | [module-4-fairness-compliance.md](./modules/module-4-fairness-compliance.md) |
+| 3 | AI-Assisted Content Generation | In Progress — summary/questions/red-flags built, rough draft | 2nd LLM provider not chosen (stubbed with a deterministic offline template); hallucination-rate suspension threshold not defined (no agreed figure exists yet) | [module-3-ai-content-generation.md](./modules/module-3-ai-content-generation.md) |
+| 4 | Fairness & Compliance | In Progress — adverse-impact testing + core services built, rough draft | Jurisdiction *detection* not built (default-to-strictest rule is); quarterly/on-change re-test scheduler and retention scheduler not started (need Module 7's job infrastructure); access/correction requests are a workflow skeleton (no real candidate-data store to fulfill against yet) | [module-4-fairness-compliance.md](./modules/module-4-fairness-compliance.md) |
 | 5 | Presentation Layer | Not Started | — | [module-5-presentation-layer.md](./modules/module-5-presentation-layer.md) |
 | 6 | Scheduling Coordination | Not Started | Manus scope confirmation pending (stubbed) | [module-6-scheduling-coordination.md](./modules/module-6-scheduling-coordination.md) |
 | 7 | Governance & Audit | In Progress — audit log interface + persistence | AuditEvent/AuditLog built, with both in-memory and SQLite-backed implementations; SLA monitoring, talent pool, feedback storage, retention all not started; named owner not assigned | [module-7-governance-audit.md](./modules/module-7-governance-audit.md) |
@@ -42,10 +42,26 @@ registered in `pyproject.toml`) points at a resumes folder + a JRP YAML file and
 scoring report end to end. This is a temporary command-line bridge, not Module 5's real dashboard/
 JRP-config UI (still Not Started) — see ASSUMPTIONS.md.
 
-142 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
+Wave 3 is now drafted too: Module 3's `ContentGenerationService` (`ai_content/`) generates a
+factual candidate summary with every sentence verified against a Module 1 source passage before
+being kept (FR-10; a fabricated/unanchored sentence is dropped, proven with a fake LLM provider
+that deliberately hallucinates one), three-angle interview questions targeted off Module 2's score
+breakdown, and red-flag detection (inconsistent dates, keyword stuffing, frequent job changes,
+employment gaps — the latter two worded as neutral clarification prompts, never a penalty, per
+fairness guidance). Module 4's fairness/compliance services (`fairness_compliance/`) cover
+four-fifths adverse-impact testing corroborated by a two-proportion significance test, skill-
+ontology maintenance (structurally satisfying Module 2's `SkillOntology` protocol with **zero
+import dependency on `scoring_engine`**), consent capture (talent-pool consent kept separate from
+application consent), retention-eligibility checks, explainability-on-request (reads an existing
+`Score` only, never re-scores), and an access/correction request workflow. `tests/
+test_architectural_invariants.py` enforces FR-9's determinism wall by AST-checking imports:
+`scoring_engine` may never import `ai_content` or `fairness_compliance`, and `ai_content` may never
+construct a `Score`.
+
+211 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
 without the Tesseract binary). See `ASSUMPTIONS.md` at the repo root for every stub this draft
 makes — including an observed, non-theoretical accuracy tradeoff for local OCR vs. a managed cloud
-provider. Modules 3, 4, and 6 are empty placeholder packages only; Module 5 has this CLI as a
+provider. Module 6 is an empty placeholder package only; Module 5 has the CLI bridge above as a
 temporary stand-in for its real UI.
 
 **2026-07-21 code-review pass:** found and fixed two gateway-level correctness bugs (not stubs —
@@ -57,6 +73,39 @@ reprocess the same resumes forever. Also: untrusted raw text is now logged to `T
 only after injection screening (previously logged before), and a handful of smaller Standards-axis
 smells (duplicated identity-fallback logic, a query function with a hidden global side effect,
 a magic version string) were cleaned up. See `ASSUMPTIONS.md` for the per-fix writeups.
+
+**2026-07-22 code-review pass (Modules 3+4):** found and fixed four real defects via a Standards/
+Spec review against design.md/prompt.md before committing: (1) `adverse_impact.four_fifths_test()`
+produced zero audit events at all, violating md/prompt.md §2 invariant 5 ("every fairness flag"
+must be audit-logged) — added `AdverseImpactTestingService` to close the gap; (2) the same function
+force-flagged a JRP with zero hires in every group as maximal adverse impact, since dividing by a
+zero highest-rate was hardcoded to 0.0 rather than treated as "no disparity observed"; (3)
+`interview_questions.generate_interview_questions()` could produce zero VERIFICATION and zero GAP
+questions for any candidate scoring in the (0.5, 0.85) band on every dimension — not a rare edge
+case, since that band covers the entire Mid Match tier — fixed with a relative-rank fallback so
+every candidate gets at least one of each angle; (4) `fairness_compliance/explainability.py`
+imported `Score` via `scoring_engine.interfaces` but `JRP` via `.models` directly, and
+`ai_content/interview_questions.py` did the same for `Dimension` — both now go through
+`.interfaces` consistently (and `Dimension` was added to that module's public exports, since a
+downstream consumer needed it). See `ASSUMPTIONS.md` for the write-ups, including two
+findings resolved by documenting an interpretation rather than changing code (only the summary
+routes through `LLMProvider`, not interview questions/red flags; a small regex is deliberately
+duplicated across `ai_content` and `scoring_engine` rather than shared, to keep them decoupled).
+
+**2026-07-22 test-coverage check (Modules 3+4):** audited the new test suites against every
+`test.md` §3/§4 scenario line-by-line. Coverage was already solid (T3.1-T3.6, T3.8, T4.1-T4.2,
+T4.5-T4.8, T4.11-T4.13 all directly exercised); T3.7's injection-defense scenario turned out to
+already be covered end-to-end by Module 1's `test_t1_11_suspected_injection_is_flagged_logged_and_
+routed_not_scored` (a resume that fails injection screening never reaches Module 3 at all, so there
+was nothing left for this module to test). Closed three real gaps: (1)
+`standardized_difference_test`'s `standard_error == 0` guard was never exercised by any test — added
+both-groups-at-0% and both-groups-at-100% cases; (2) T4.4 ("fairness output is aggregate-only, no
+individual's protected attributes exposed") had no explicit assertion — added a structural test on
+`FourFifthsResult`'s fields; (3) `TemplateLLMProvider`'s generic-field fallback sentence (for a
+field name outside skills/projects/experience/education) was unreachable dead code from every
+existing test, since `build_source_passages` never emits one — added a dedicated
+`tests/ai_content/test_llm_provider.py` testing the provider in isolation rather than only through
+the summary-generation pipeline. 205 -> 211 tests; no production code changed.
 
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
@@ -149,36 +198,36 @@ named person to exist), but the system should not go live until they're resolved
 
 ## 5. Module 3 — AI-Assisted Content Generation
 
-- [ ] LLM provider selected + integrated
-- [ ] Structured-input-only enforcement
-- [ ] Summary generation
-- [ ] Sentence-level anchoring
-- [ ] Interview question generation
-- [ ] Red-flag detection
-- [ ] Red-flag fairness framing review
-- [ ] Model/prompt version stamping
-- [ ] Hallucination-audit hook
-- [ ] Hallucination threshold + suspension logic
+- [ ] LLM provider selected + integrated — stubbed with `TemplateLLMProvider` (deterministic, offline)
+- [x] Structured-input-only enforcement — `SummaryGenerationService`/`ContentGenerationService` take only `ExtractedResume` + `Score`, no raw-text parameter exists anywhere
+- [x] Summary generation
+- [x] Sentence-level anchoring — `anchoring.py`, coverage-based heuristic (judgement call, see ASSUMPTIONS.md)
+- [x] Interview question generation — verification/gap angles from `Score.breakdown`, behavioral grounded in real project/experience text when available
+- [x] Red-flag detection — inconsistency, keyword stuffing, frequent job changes, employment gap
+- [x] Red-flag fairness framing review — gap/frequency flags carry `neutral_framing=True`, worded as clarification prompts (test.md T3.6)
+- [x] Model/prompt version stamping — `MODEL_VERSION`/`PROMPT_VERSION` on every `CandidateSummary`
+- [x] Hallucination-audit hook — `HallucinationAuditLog.sample()`
+- [ ] Hallucination threshold + suspension logic — mechanism built (`is_suspension_triggered`), no default number exists to wire it to yet (see ASSUMPTIONS.md)
 
 ## 6. Module 4 — Fairness & Compliance
 
-- [ ] Voluntary demographic collection
-- [ ] Selection-rate calculation
-- [ ] Four-fifths rule check
-- [ ] Statistical significance corroboration
-- [ ] Pre-deployment back-test
-- [ ] Quarterly re-test scheduler
-- [ ] Re-test trigger on JRP weight/must-have change (not calendar-only)
-- [ ] Disparate-treatment review workflow
-- [ ] PICS collection notice
-- [ ] Separate talent-pool consent capture
-- [ ] Retention auto-delete/anonymize job
-- [ ] Consent-withdrawal deletion workflow
-- [ ] Jurisdiction detection logic
-- [ ] Skill-ontology/synonym mapping table + maintenance interface
-- [ ] Explainability-on-request response generator
-- [ ] Access/correction request handling workflow
-- [ ] Feedback-to-scoring gate (blocks Module 7 feedback reaching Module 2 without re-test)
+- [ ] Voluntary demographic collection — `DemographicRecord` modeled; no intake UI/flow to actually collect it yet (Module 5's job)
+- [x] Selection-rate calculation — `GroupOutcome.selection_rate`
+- [x] Four-fifths rule check — audit-logged via `AdverseImpactTestingService` (every flag *and* every pass, per prompt.md invariant 5)
+- [x] Statistical significance corroboration — two-proportion z-test (see ASSUMPTIONS.md for why not chi-square)
+- [ ] Pre-deployment back-test — no "deployment"/activation concept exists yet to gate
+- [ ] Quarterly re-test scheduler — needs Module 7's job infrastructure (not built)
+- [ ] Re-test trigger on JRP weight/must-have change (not calendar-only) — same gap as above
+- [ ] Disparate-treatment review workflow — not started
+- [x] PICS collection notice — `consent.PICS_NOTICE`
+- [x] Separate talent-pool consent capture — `ConsentService`, `ConsentType.APPLICATION`/`TALENT_POOL` tracked independently
+- [ ] Retention auto-delete/anonymize job — eligibility check built (`retention.py`), no recurring job
+- [ ] Consent-withdrawal deletion workflow — eligibility check built, no job to act on it
+- [x] Jurisdiction detection logic — only the default-to-strictest *rule*; detecting a real jurisdiction from candidate data is flagged, not built
+- [x] Skill-ontology/synonym mapping table + maintenance interface — `SkillOntologyRepository`, zero import dependency on `scoring_engine` (see ASSUMPTIONS.md)
+- [x] Explainability-on-request response generator — reads an existing `Score` only, never re-scores
+- [x] Access/correction request handling workflow — request lifecycle only; no real candidate-data store to fulfill against yet
+- [x] Feedback-to-scoring gate — satisfied by absence: Module 7's Feedback store isn't built yet, so no code path can exist; revisit once it is
 
 ## 7. Module 5 — Presentation Layer
 

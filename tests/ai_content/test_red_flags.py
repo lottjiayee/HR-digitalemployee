@@ -1,0 +1,69 @@
+"""Tests for red-flag detection (FR-12, test.md T3.4, T3.6)."""
+
+from __future__ import annotations
+
+from hr_digital_employee.ai_content.models import RedFlagKind
+from hr_digital_employee.ai_content.red_flags import detect_red_flags
+from hr_digital_employee.intake_extraction.extraction import ExtractionService
+
+
+def test_t3_4_overlapping_dates_are_flagged_as_an_inconsistency() -> None:
+    resume_text = (
+        "Working Experience:\n"
+        "2015-2018 Engineer at Alpha Corp\n"
+        "2017-2020 Engineer at Beta Corp\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    inconsistency = next(f for f in flags if f.kind is RedFlagKind.INCONSISTENCY)
+    assert inconsistency.neutral_framing is False
+
+
+def test_t3_6_an_employment_gap_is_framed_as_a_neutral_clarification_item() -> None:
+    resume_text = (
+        "Working Experience:\n2010-2012 Engineer at Alpha Corp\n2015-2018 Engineer at Beta Corp\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    gap_flag = next(f for f in flags if f.kind is RedFlagKind.EMPLOYMENT_GAP)
+    assert gap_flag.neutral_framing is True
+    assert "penalty" not in gap_flag.description.lower()
+    assert "consider asking" in gap_flag.description.lower()
+
+
+def test_frequent_short_tenures_are_flagged_neutrally() -> None:
+    resume_text = (
+        "Working Experience:\n"
+        "2018-2019 Engineer at A\n2019-2020 Engineer at B\n2020-2021 Engineer at C\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    frequent_changes = next(f for f in flags if f.kind is RedFlagKind.FREQUENT_JOB_CHANGES)
+    assert frequent_changes.neutral_framing is True
+
+
+def test_repeated_skill_entries_are_flagged_as_keyword_stuffing() -> None:
+    resume_text = "Skills:\nPython\nPython\nPython\nPython\n"
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    stuffing = next(f for f in flags if f.kind is RedFlagKind.KEYWORD_STUFFING)
+    assert stuffing.neutral_framing is False
+    assert "python" in stuffing.description.lower()
+
+
+def test_a_clean_consistent_resume_produces_no_flags() -> None:
+    resume_text = (
+        "Skills:\nPython\nSQL\n\nWorking Experience:\n2018-2023 Engineer at TechCorp\n"
+        "Education:\nBachelor of Computer Science\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    assert detect_red_flags(extracted) == ()
