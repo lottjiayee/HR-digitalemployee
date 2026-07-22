@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 hr-digital-employee = "hr_digital_employee.cli:main"
+hr-digital-employee-jrp-editor = "hr_digital_employee.jrp_editor.launcher:main"
 
 [project.optional-dependencies]
 dev = [
@@ -25,12 +26,21 @@ dev = [
     "pytest-cov>=5.0",
     "types-PyYAML>=6.0",
 ]
+ui = [
+    "streamlit>=1.38",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12, not the project's 3.11 floor (requires-python above): numpy's bundled stub (pulled in
+# transitively by the optional `ui` extra's streamlit -> pandas -> numpy chain) uses PEP 695 `type`
+# statement syntax mypy only parses at python_version >= 3.12. This only loosens what stub syntax
+# mypy's parser accepts -- it does not change requires-python, and this project writes no 3.12-only
+# syntax itself (ruff's target-version below stays "py311" and would need to be bumped too before
+# that became possible without notice).
+python_version = "3.12"
 strict = true
 warn_unused_ignores = true
 disallow_any_generics = true
@@ -40,6 +50,12 @@ explicit_package_bases = true
 [[tool.mypy.overrides]]
 module = "pytesseract"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "streamlit"
+ignore_missing_imports = true
+follow_imports = "skip"
+
 
 [tool.ruff]
 line-length = 100

@@ -333,6 +333,37 @@ a YAML file and running one command -- without prematurely deciding the frontend
 question design.md §10.4 leaves open, and without building a backend API server (none exists in
 this codebase yet) just to serve a UI that isn't designed yet either.
 
+## A Streamlit form for editing a JRP, not module-5 doc §7's "JRP configuration UI" item
+
+**Status:** Temporary convenience layer on top of the YAML bridge above -- still not Module 5
+**What was built:** `jrp_editor/` -- `config_builder.py` builds/reads the same dict shape
+`jrp_config.py` parses (Streamlit-free, independently unit-tested), and `app.py` is a one-page
+Streamlit form over it: HR fills in weights/must-haves/curves through number inputs, selectboxes,
+and a dynamic table instead of hand-editing YAML, sees a live weight-sum indicator and the
+Educational-Level-weight guideline warning, and gets the same `JRPConfigError` validation the CLI
+enforces before a "Save YAML" button is enabled. `launcher.py` registers the
+`hr-digital-employee-jrp-editor` console script so running it doesn't require knowing `streamlit
+run <path>` or the app's file location. Streamlit itself is an optional dependency (`pip install
+".[ui]"` / `uv sync --extra ui`) -- `pyproject.toml`'s `streamlit` mypy override
+(`ignore_missing_imports` + `follow_imports = "skip"`) keeps `mypy src` passing whether or not it's
+installed, since only `app.py`/`launcher.py` import it.
+**What a real implementation must satisfy:** module-5 doc §7's actual "JRP configuration UI" item
+means this embedded in the real dashboard, behind auth, with a change history and no separate
+process to launch -- this form has none of that, same caveat as the CLI bridge above.
+**Why this default:** a local one-page form is a large convenience jump over hand-written YAML for
+close to no build cost, and doesn't require deciding design.md §10.4's frontend framework question
+or building a backend API server to get there -- it's the same "usable by *someone* right now"
+tradeoff as the CLI bridge, one layer higher.
+**A dependency-environment note, not a design decision:** installing the `ui` extra pulls in
+`streamlit -> pandas -> numpy`, and numpy's bundled stub uses PEP 695 `type` statement syntax that
+mypy only parses at `python_version >= 3.12` -- with the project's prior `python_version = "3.11"`,
+`mypy src` failed with a syntax error inside `numpy/__init__.pyi` itself whenever both `dev` and
+`ui` extras were installed together (PIL.ImageCms, a pre-existing dependency, imports numpy under
+`TYPE_CHECKING`, and per-module `follow_imports = "skip"` overrides aimed at `numpy`/`PIL.ImageCms`
+did not suppress it in this mypy version). Fixed by bumping `[tool.mypy] python_version` to `3.12`
+-- this only loosens which stub syntax mypy's parser accepts; it does not change `requires-python`
+(still `>=3.11`) and this project writes no 3.12-only syntax of its own.
+
 ## AI-Assisted Content Generation: the second LLM provider
 
 **Status:** Stubbed — pending human decision (design.md §10.2, `md/progress.md` §2a)

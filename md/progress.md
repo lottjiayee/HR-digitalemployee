@@ -1,6 +1,6 @@
 # HR Digital Employee — Development Progress
 
-**Last updated:** 2026-07-21
+**Last updated:** 2026-07-22
 **Source docs:** [requirement.md](./requirement.md), [design.md](./design.md), [modules/](./modules/)
 
 Status values used throughout: `Not Started` → `In Progress` → `Blocked` → `Done`
@@ -42,6 +42,12 @@ registered in `pyproject.toml`) points at a resumes folder + a JRP YAML file and
 scoring report end to end. This is a temporary command-line bridge, not Module 5's real dashboard/
 JRP-config UI (still Not Started) — see ASSUMPTIONS.md.
 
+There's now also a form over that YAML file instead of hand-editing it: `jrp_editor/` is a one-page
+Streamlit app (`hr-digital-employee-jrp-editor` console script, optional `ui` extra) where HR fills
+in weights/must-haves/curves and gets a live weight-sum check and the same `JRPConfigError`
+validation the CLI enforces before saving. Still not Module 5's real JRP configuration UI — no
+auth, no history, not embedded in a dashboard — see ASSUMPTIONS.md.
+
 Wave 3 is now drafted too: Module 3's `ContentGenerationService` (`ai_content/`) generates a
 factual candidate summary with every sentence verified against a Module 1 source passage before
 being kept (FR-10; a fabricated/unanchored sentence is dropped, proven with a fake LLM provider
@@ -58,7 +64,7 @@ test_architectural_invariants.py` enforces FR-9's determinism wall by AST-checki
 `scoring_engine` may never import `ai_content` or `fairness_compliance`, and `ai_content` may never
 construct a `Score`.
 
-211 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
+222 tests, mypy --strict / ruff / ruff format all pass (OCR tests skip gracefully on a machine
 without the Tesseract binary). See `ASSUMPTIONS.md` at the repo root for every stub this draft
 makes — including an observed, non-theoretical accuracy tradeoff for local OCR vs. a managed cloud
 provider. Module 6 is an empty placeholder package only; Module 5 has the CLI bridge above as a
@@ -234,7 +240,10 @@ named person to exist), but the system should not go live until they're resolved
 None of this module itself is built yet. `cli.py`'s `hr-digital-employee` console script is a
 temporary, separate command-line bridge over Modules 1+2 (a ranked-report printout, no dashboard,
 no Pass/Reject action) — useful for running the pipeline at all right now, but not a substitute for
-any item below. See ASSUMPTIONS.md.
+any item below. `jrp_editor/` (`hr-digital-employee-jrp-editor` console script, optional `ui` extra)
+adds a one-page Streamlit form over the same YAML JRP config so HR can fill in weights/must-haves
+through a form instead of hand-editing YAML — still not the real "JRP configuration UI" item below
+(no auth, no history, not embedded in a dashboard). See ASSUMPTIONS.md.
 
 - [ ] Notification cards (Email, Teams)
 - [ ] Comparison table
