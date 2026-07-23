@@ -1,6 +1,6 @@
 # Module 5: Presentation Layer
 
-**Status:** Not Started
+**Status:** In Progress -- comparison table + drill-down dashboard built, rough draft
 **Design source:** [design.md](../design.md) §3.7–3.8
 **Requirement source:** [requirement.md](../requirement.md) FR-11, FR-13, FR-14
 
@@ -55,16 +55,22 @@ change.
 
 - [ ] Notification card rendering (Email)
 - [ ] Notification card rendering (Teams)
-- [ ] Detailed comparison table view
+- [x] Detailed comparison table view -- `presentation/app.py` (Streamlit, `hr-digital-employee-
+      dashboard` console script), read-only, over the same Modules 1+2+3 pipeline as the CLI
+      report; see ASSUMPTIONS.md for exactly what this first slice does and doesn't cover
 - [ ] Dashboard: pipeline overview (totals, average score, stage distribution)
 - [ ] Dashboard: filtering (score range, skills, experience, source)
-- [ ] Dashboard: candidate drill-down (full report + original resume)
+- [x] Dashboard: candidate drill-down (full report; original resume file itself not shown, only
+      its extracted fields -- see ASSUMPTIONS.md)
 - [ ] Dashboard: skill-gap / applicant-pool visualizations
-- [ ] JRP configuration UI (weights, must-have flags, curves)
+- [ ] JRP configuration UI (weights, must-have flags, curves) -- `jrp_editor/` covers this today
+      as a separate, not-yet-merged-into-this-dashboard tool (see module doc)
 - [ ] Fairness-flag review UI (surfaces Module 4 flags to JRP owners)
 - [ ] Explicit Pass/Reject action (with mandatory reason field)
 - [ ] Decision logging on every Pass/Reject (actor, timestamp, reason)
-- [ ] UI/UX review confirming no path exists to auto-filter by score
+- [x] UI/UX review confirming no path exists to auto-filter by score -- this slice has no
+      filtering of any kind yet, so the constraint holds trivially; re-verify when filtering
+      (above) is built
 
 ## 8. Testing
 

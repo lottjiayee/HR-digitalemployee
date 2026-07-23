@@ -945,6 +945,60 @@ either a bigger design change than this pass's scope or a genuine judgment call 
 
 272 tests (261 -> 272; eleven new regression tests); ruff/mypy clean.
 
+## Module 5, first slice (2026-07-23): comparison table + drill-down dashboard
+
+Module 5 (Presentation Layer) was entirely "Not Started" until now. Per the user's own
+prioritization (Module 5 has 11 checklist items -- notification cards, dashboard overview/
+filtering/drill-down/visualizations, JRP configuration UI, fairness-flag review, Pass/Reject +
+decision logging -- too large for one increment), this first slice is deliberately scoped to just
+the comparison table and candidate drill-down, both read-only.
+
+**What's built:** `presentation/dashboard_data.py` (Streamlit-free: wraps the shared pipeline
+runner plus Module 3's `ContentGenerationService` per candidate into a `DashboardRow` -- score,
+extracted resume, and generated summary/questions/red-flags together) and `presentation/app.py`
+(the Streamlit UI: a `Run` form taking a resumes folder + JRP YAML path, a comparison table, and a
+`selectbox`-driven drill-down showing the full matching analysis, summary, interview questions,
+and red flags for one candidate at a time). `presentation/launcher.py` binds to `127.0.0.1` only,
+same fix as `jrp_editor/launcher.py` (see the Security review section above for why).
+
+**Refactor along the way:** `cli.py`'s `run()` function and the dashboard both need to run the
+same Modules 1+2 pipeline (channel adapter -> extraction -> dedup -> profile adapter -> scoring).
+Rather than duplicate that wiring in a second entry point, it's now factored into
+`src/hr_digital_employee/pipeline.py` (`run_pipeline()` returning `CandidateResult` records, plus
+a shared `candidate_label()` helper). `cli.py`'s `run()` is now a thin wrapper mapping
+`CandidateResult` down to the `(label, Score)` tuples its own report printer expects --
+`tests/integration/test_cli.py`'s existing assertions against `run()`'s public contract needed no
+changes.
+
+**A real bug found while building this, not planted by a review round:** `AppTest`-testing the
+dashboard's "bad JRP path" error case showed the error banner never appeared -- `load_jrp_from_yaml
+()` raised an uncaught `FileNotFoundError` for a missing/unreadable file, since it only ever wrapped
+YAML-syntax errors, not the file read itself, in `JRPConfigError`. `cli.py`'s `main()` only catches
+`JRPConfigError`, so this was already a live bug there too (a typo'd `--jrp` path crashes with a raw
+traceback) -- just never exercised by an existing test. **Fixed:** `path.read_text(...)` is now
+wrapped in its own `try/except OSError`, raising `JRPConfigError` the same way the YAML-parse
+failure already does.
+
+**What this slice deliberately does NOT cover** (real gaps, not oversights -- see module-5 doc §7
+for the authoritative checklist):
+- No filtering of any kind (by score, skill, experience, source) -- design.md §3.8 requires that
+  filtering never function as an implicit "hide below X%" rejection; the simplest way to guarantee
+  that for now is not building filtering yet at all, rather than building it and then having to
+  prove a negative.
+- No dashboard-level pipeline-overview stats (totals, average score, stage distribution) or
+  skill-gap visualizations.
+- No Pass/Reject action or decision logging -- design.md §3.8 calls this "the only component with
+  a write path to candidate status," which is a real architectural commitment (needs a persistent
+  candidate-status store that doesn't exist anywhere in this codebase yet) deserving its own
+  increment, not something to bolt on inside this one.
+- No persistent candidate store at all: every dashboard run re-executes the full pipeline against
+  whatever's currently in the given resumes folder, in memory, same as `cli.py`. Nothing is saved
+  between runs.
+- The original resume file itself isn't shown in the drill-down, only Module 1's already-extracted
+  structured fields (skills/projects/experience/education) -- module-5 doc's "original resume"
+  wording is only partially satisfied.
+- JRP configuration is not merged into this dashboard; `jrp_editor/` remains a separate tool.
+
 ## What this draft does NOT cover yet
 
 This is a rough first draft of Wave 1 (Module 1: Intake & Extraction, the minimum of Module 7:
@@ -962,7 +1016,8 @@ request workflow).
 **Not yet built:** manual-review SLA monitoring/alerting, incident routing, weekly operational
 review, Talent Pool Store, Candidate Feedback storage, one-round-one-version enforcement, the
 NFR-6 rollback hook, the quarterly/on-change fairness re-test scheduler, jurisdiction detection,
-real candidate-data-store fulfillment for access/correction requests, any real web UI/dashboard/API
-server (Module 5, other than the temporary CLI bridge), and Module 6 entirely (empty placeholder
-package only, per `md/prompt.md` §5's repository layout). See `md/progress.md` for the
-authoritative checklist.
+real candidate-data-store fulfillment for access/correction requests, most of Module 5 (see its own
+section above for the one slice that is built -- no notification cards, no pipeline-overview
+stats/filtering/visualizations, no JRP-config-in-dashboard, no Pass/Reject action, no persistent
+candidate store, no API server), and Module 6 entirely (empty placeholder package only, per
+`md/prompt.md` §5's repository layout). See `md/progress.md` for the authoritative checklist.

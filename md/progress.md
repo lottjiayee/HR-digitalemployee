@@ -15,7 +15,7 @@ Status values used throughout: `Not Started` → `In Progress` → `Blocked` →
 | 2 | Scoring Engine | In Progress — core scoring math + Module 1 adapter built, rough draft | Module 1 -> Module 2 profile adapter is a regex-heuristic stub (word-form numbers, open-ended date ranges not handled); skill ontology is an exact-match/synonym-map stub pending Module 4; one-round-one-version enforcement and NFR-6 rollback hook not started | [module-2-scoring-engine.md](./modules/module-2-scoring-engine.md) |
 | 3 | AI-Assisted Content Generation | In Progress — summary/questions/red-flags built, rough draft | 2nd LLM provider not chosen (stubbed with a deterministic offline template); hallucination-rate suspension threshold not defined (no agreed figure exists yet) | [module-3-ai-content-generation.md](./modules/module-3-ai-content-generation.md) |
 | 4 | Fairness & Compliance | In Progress — adverse-impact testing + core services built, rough draft | Jurisdiction *detection* not built (default-to-strictest rule is); quarterly/on-change re-test scheduler and retention scheduler not started (need Module 7's job infrastructure); access/correction requests are a workflow skeleton (no real candidate-data store to fulfill against yet) | [module-4-fairness-compliance.md](./modules/module-4-fairness-compliance.md) |
-| 5 | Presentation Layer | Not Started | — | [module-5-presentation-layer.md](./modules/module-5-presentation-layer.md) |
+| 5 | Presentation Layer | In Progress — comparison table + drill-down dashboard built, rough draft | Notification cards, pipeline overview/filtering, skill-gap visualizations, fairness-flag review UI, and the Pass/Reject action + decision logging are all not started | [module-5-presentation-layer.md](./modules/module-5-presentation-layer.md) |
 | 6 | Scheduling Coordination | Not Started | Manus scope confirmation pending (stubbed) | [module-6-scheduling-coordination.md](./modules/module-6-scheduling-coordination.md) |
 | 7 | Governance & Audit | In Progress — audit log interface + persistence | AuditEvent/AuditLog built, with both in-memory and SQLite-backed implementations; SLA monitoring, talent pool, feedback storage, retention all not started; named owner not assigned | [module-7-governance-audit.md](./modules/module-7-governance-audit.md) |
 
@@ -205,6 +205,22 @@ score's outcome between two identical calls; the "raw text never reaches an LLM"
 comment-only, not code-enforced; `SqliteAuditLog` having no schema-versioning path) — see
 ASSUMPTIONS.md. 261 -> 272 tests; ruff/mypy clean.
 
+**2026-07-23: Module 5 first slice -- comparison table + drill-down dashboard.** Built
+`presentation/app.py`, a read-only Streamlit dashboard (comparison table across every scored
+candidate, per-candidate drill-down with score breakdown/summary/interview questions/red flags),
+plus `presentation/dashboard_data.py` (Streamlit-free data layer, same pattern as
+`jrp_editor/config_builder.py`) and `presentation/launcher.py` (loopback-only, same fix as
+`jrp_editor/launcher.py`). Along the way, extracted `pipeline.py` as the shared Modules-1+2 runner
+so `cli.py` and the new dashboard don't each duplicate the intake/scoring wiring; `cli.py`'s public
+`run()` contract is unchanged. Building the dashboard's error handling surfaced one more real,
+pre-existing bug: `jrp_config.load_jrp_from_yaml()` raised an uncaught `FileNotFoundError` for a
+missing/unreadable path instead of `JRPConfigError` -- neither `cli.py` nor the new dashboard
+catches anything broader than `JRPConfigError`, so a typo'd path crashed with a raw traceback
+either way; fixed to wrap `OSError` the same way YAML-syntax errors already are. 272 -> 280 tests;
+ruff/mypy clean; manually smoke-tested by launching the real Streamlit server and confirming it
+serves successfully, on top of `AppTest`-driven tests that exercise the actual pipeline run,
+drill-down selection, and error path.
+
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
 (per prompt.md §3's stub-and-document rule), and ones that are real-world facts no amount of code
@@ -330,25 +346,30 @@ named person to exist), but the system should not go live until they're resolved
 
 ## 7. Module 5 — Presentation Layer
 
-None of this module itself is built yet. `cli.py`'s `hr-digital-employee` console script is a
-temporary, separate command-line bridge over Modules 1+2 (a ranked-report printout, no dashboard,
-no Pass/Reject action) — useful for running the pipeline at all right now, but not a substitute for
-any item below. `jrp_editor/` (`hr-digital-employee-jrp-editor` console script, optional `ui` extra)
-adds a one-page Streamlit form over the same YAML JRP config so HR can fill in weights/must-haves
-through a form instead of hand-editing YAML — still not the real "JRP configuration UI" item below
-(no auth, no history, not embedded in a dashboard). See ASSUMPTIONS.md.
+A first slice is built: `presentation/app.py` (`hr-digital-employee-dashboard` console script,
+optional `ui` extra) is a read-only Streamlit dashboard showing a comparison table across every
+candidate scored from a resumes folder + JRP, and a drill-down per candidate (full score
+breakdown, factual summary, interview questions, red flags) — built on the same Modules 1+2+3
+pipeline as `cli.py`'s report, now factored into a shared `pipeline.py` so the intake/scoring
+wiring exists in one place rather than duplicated across entry points. `cli.py`'s
+`hr-digital-employee` console script remains the plain-text alternative. `jrp_editor/`
+(`hr-digital-employee-jrp-editor` console script) still covers JRP configuration as a separate
+tool, not yet merged into this dashboard. See ASSUMPTIONS.md for exactly what this slice does and
+doesn't cover (no filtering, no pipeline-overview stats, no Pass/Reject action, no persistent
+candidate store — every run is a fresh in-memory pipeline execution over the folder/JRP given).
 
 - [ ] Notification cards (Email, Teams)
-- [ ] Comparison table
+- [x] Comparison table
 - [ ] Dashboard overview
 - [ ] Dashboard filtering
-- [ ] Candidate drill-down
+- [x] Candidate drill-down
 - [ ] Skill-gap visualizations
 - [ ] JRP configuration UI
 - [ ] Fairness-flag review UI
 - [ ] Pass/Reject action + mandatory reason
 - [ ] Decision logging
-- [ ] No-auto-filter UX review
+- [x] No-auto-filter UX review — trivially true (no filtering exists yet in this slice); revisit
+      when filtering is built
 
 ## 8. Module 6 — Scheduling Coordination
 

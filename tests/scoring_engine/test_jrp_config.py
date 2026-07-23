@@ -178,6 +178,15 @@ def test_invalid_yaml_syntax_raises_jrp_config_error(tmp_path: Path) -> None:
         load_jrp_from_yaml(config_path)
 
 
+def test_a_nonexistent_jrp_path_raises_jrp_config_error_not_a_raw_crash(tmp_path: Path) -> None:
+    # Regression: a missing/unreadable file (a typo'd --jrp path, or the dashboard's Run form)
+    # raised an uncaught FileNotFoundError -- neither cli.py's nor the dashboard's error handling
+    # catches anything but JRPConfigError, so this escaped as a raw traceback instead of the
+    # actionable message every other invalid-config case already gets.
+    with pytest.raises(JRPConfigError, match="cannot read file"):
+        load_jrp_from_yaml(tmp_path / "does-not-exist.yaml")
+
+
 def test_weight_still_sums_to_100_after_parsing() -> None:
     jrp = _parse(FULL_CONFIG)
     assert sum(c.weight for c in jrp.weighted_criteria) == 100.0

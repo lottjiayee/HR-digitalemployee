@@ -61,9 +61,17 @@ class JRPConfigError(ValueError):
 
 def load_jrp_from_yaml(path: Path) -> JRP:
     """Read and parse a JRP configuration file. Raises `JRPConfigError` on anything invalid --
-    an unrecognized `dimension`/`curve`/`weight_template` name, a missing required key, etc."""
+    an unrecognized `dimension`/`curve`/`weight_template` name, a missing required key, a
+    nonexistent/unreadable path, etc."""
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        # A missing file, a directory given by mistake, a permissions error -- every caller of
+        # this function already catches JRPConfigError specifically (cli.py, the dashboard); a
+        # raw FileNotFoundError/PermissionError previously escaped uncaught as a crash instead.
+        raise JRPConfigError(f"{path}: cannot read file: {error}") from error
+    try:
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as error:
         raise JRPConfigError(f"{path}: not valid YAML: {error}") from error
     return parse_jrp_config(raw, source=str(path))

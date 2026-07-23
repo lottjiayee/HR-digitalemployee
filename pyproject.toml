@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 hr-digital-employee = "hr_digital_employee.cli:main"
 hr-digital-employee-jrp-editor = "hr_digital_employee.jrp_editor.launcher:main"
+hr-digital-employee-dashboard = "hr_digital_employee.presentation.launcher:main"
 
 [project.optional-dependencies]
 dev = [

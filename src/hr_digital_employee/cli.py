@@ -16,16 +16,11 @@ from pathlib import Path
 from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog
 from hr_digital_employee.governance_audit.interfaces import AuditLog
 from hr_digital_employee.governance_audit.sqlite_audit_log import SqliteAuditLog
-from hr_digital_employee.intake_extraction.channel_adapters import LocalFolderChannelAdapter
-from hr_digital_employee.intake_extraction.dedup import IdentityDedupService
-from hr_digital_employee.intake_extraction.extraction import ExtractionService
-from hr_digital_employee.intake_extraction.gateway import IngestionGateway
 from hr_digital_employee.intake_extraction.manual_review_queue import ManualReviewQueue
 from hr_digital_employee.intake_extraction.text_extraction_log import TextExtractionLog
-from hr_digital_employee.scoring_engine.engine import ScoringEngine
+from hr_digital_employee.pipeline import candidate_label, run_pipeline
 from hr_digital_employee.scoring_engine.jrp_config import JRPConfigError, load_jrp_from_yaml
 from hr_digital_employee.scoring_engine.models import JRP, Score
-from hr_digital_employee.scoring_engine.profile_adapter import build_candidate_profile
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -65,24 +60,8 @@ def run(
     """Run the intake -> extraction -> scoring pipeline once against every file currently in
     `resumes_folder`. Returns (candidate label, Score) pairs sorted by total_score descending,
     plus the manual-review queue for anything that never made it to a Score."""
-    manual_review_queue = ManualReviewQueue()
-    gateway = IngestionGateway(
-        channel_adapters=[LocalFolderChannelAdapter(resumes_folder)],
-        extraction_service=ExtractionService(),
-        dedup_service=IdentityDedupService(),
-        manual_review_queue=manual_review_queue,
-        audit_log=audit_log,
-        text_log=text_log,
-    )
-
-    results: list[tuple[str, Score]] = []
-    for candidate, extracted in gateway.run_once():
-        profile = build_candidate_profile(extracted)
-        score = ScoringEngine().score(profile, jrp, extracted.parser_version)
-        label = candidate.name or candidate.email or candidate.phone or candidate.candidate_id
-        results.append((label, score))
-
-    results.sort(key=lambda pair: pair[1].total_score, reverse=True)
+    pipeline_results, manual_review_queue = run_pipeline(resumes_folder, jrp, audit_log, text_log)
+    results = [(candidate_label(result.candidate), result.score) for result in pipeline_results]
     return results, manual_review_queue
 
 
