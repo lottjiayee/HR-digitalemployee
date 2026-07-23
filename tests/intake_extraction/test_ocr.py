@@ -9,6 +9,7 @@ from image_fixtures import (
     build_decompression_bomb_png_bytes,
     build_image_with_text,
     build_sidebar_resume_image,
+    rotate_image_bytes,
 )
 
 from hr_digital_employee.intake_extraction import ocr
@@ -90,6 +91,28 @@ def test_sidebar_layout_with_icons_still_returns_text_without_crashing() -> None
     # score's >=0.85 clean-layout baseline) -- not asserting an exact number since Tesseract's
     # output on this kind of layout is version-dependent, but the signal itself must exist.
     assert 0.0 <= confidence <= 1.0
+
+
+@requires_tesseract
+@pytest.mark.parametrize("degrees", [90, 180, 270])
+def test_a_rotated_scan_is_corrected_before_ocr(degrees: int) -> None:
+    # Regression: a resume image scanned or photographed sideways/upside down (a common
+    # phone-camera/flatbed-scanner mistake) used to OCR into unreadable garble instead of routing
+    # to manual review or scoring correctly -- confirmed a plain 90-degree rotation of this exact
+    # fixture collapsed confidence from ~0.93 to ~0.33 with garbled text before this fix.
+    # Tesseract's orientation-and-script-detection (OSD) pass now corrects the rotation first.
+    upright_result = ocr.extract_text(build_clean_layout_with_icon_row_image())
+    rotated_bytes = rotate_image_bytes(build_clean_layout_with_icon_row_image(), degrees)
+    rotated_result = ocr.extract_text(rotated_bytes)
+
+    assert upright_result is not None
+    assert rotated_result is not None
+    upright_text, upright_confidence = upright_result
+    rotated_text, rotated_confidence = rotated_result
+    assert "PROFESSIONAL EXPERIENCE" in rotated_text
+    assert "Facility Property Manager | February 2017" in rotated_text
+    assert rotated_confidence == pytest.approx(upright_confidence, abs=0.05)
+    assert rotated_text == upright_text
 
 
 @requires_tesseract

@@ -53,6 +53,34 @@ def test_missing_folder_returns_empty_list(tmp_path: Path) -> None:
     assert adapter.fetch_new_submissions() == []
 
 
+def test_docx_rtf_and_extensionless_files_are_ignored_by_the_folder_scan(tmp_path: Path) -> None:
+    # Locks in _SUPPORTED_EXTENSIONS' documented scope: these formats have no text-layer/OCR path
+    # in pdf_text.py, so this stub deliberately never picks them up -- unlike a real Email/Teams
+    # connector (which receives attachments by content, not filename), a real resume in one of
+    # these formats is silently never processed by this local-folder stand-in at all.
+    (tmp_path / "resume.docx").write_bytes(b"PK\x03\x04fake-docx-bytes")
+    (tmp_path / "resume.rtf").write_bytes(rb"{\rtf1 fake rtf}")
+    (tmp_path / "resume_no_extension").write_bytes(b"Skills:\nPython\n")
+    (tmp_path / "resume.pdf").write_bytes(b"Skills:\nSQL\n")
+
+    adapter = LocalFolderChannelAdapter(tmp_path)
+    submissions = adapter.fetch_new_submissions()
+
+    assert {s.file_bytes for s in submissions} == {b"Skills:\nSQL\n"}
+
+
+def test_a_unicode_or_emoji_filename_is_read_correctly(tmp_path: Path) -> None:
+    (tmp_path / "张伟_简历.pdf").write_bytes(b"Skills:\nPython\n")
+    (tmp_path / "resume_\U0001f600.pdf").write_bytes(b"Skills:\nSQL\n")
+
+    adapter = LocalFolderChannelAdapter(tmp_path)
+    submissions = adapter.fetch_new_submissions()
+
+    names = {s.candidate_name for s in submissions}
+    assert names == {"张伟_简历", "resume_\U0001f600"}
+    assert {s.file_bytes for s in submissions} == {b"Skills:\nPython\n", b"Skills:\nSQL\n"}
+
+
 def test_a_file_already_returned_is_not_returned_again_on_the_next_fetch(tmp_path: Path) -> None:
     (tmp_path / "resume1.pdf").write_bytes(b"Skills:\nPython\n")
     adapter = LocalFolderChannelAdapter(tmp_path)

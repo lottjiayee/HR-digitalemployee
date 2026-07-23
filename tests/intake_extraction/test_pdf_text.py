@@ -16,6 +16,32 @@ from hr_digital_employee.intake_extraction import ocr
 from hr_digital_employee.intake_extraction.pdf_text import extract_text
 
 
+def test_empty_bytes_are_treated_as_empty_plain_text_not_a_crash() -> None:
+    # A zero-byte upload/submission decodes as valid (if empty) UTF-8 -- it must be treated as
+    # "confidently read, nothing extractable", not raise or be mistaken for genuinely unparseable
+    # bytes. Downstream, the gateway correctly routes the resulting empty extraction to manual
+    # review via the ordinary low-confidence-must-have path (see test_gateway.py).
+    result = extract_text(b"")
+
+    assert result == ("", 1.0)
+
+
+def test_a_large_multi_page_pdf_is_extracted_without_crashing() -> None:
+    # Regression-guard against a large/many-page submission crashing or hanging pdf_text.py --
+    # confirmed a real 100-page, ~40-line-per-page PDF (~220KB) extracts correctly well within a
+    # second; this only needs to prove no crash/hang, not benchmark exact timing.
+    pages = [[f"Line {i} on page {page}" for i in range(40)] for page in range(100)]
+    pdf_bytes = build_multi_page_pdf_with_text(pages)
+
+    result = extract_text(pdf_bytes)
+
+    assert result is not None
+    text, confidence = result
+    assert confidence == 1.0
+    assert "Line 0 on page 0" in text
+    assert "Line 39 on page 99" in text
+
+
 def test_non_pdf_bytes_pass_through_as_plain_text() -> None:
     result = extract_text(b"Skills:\nPython\n")
 

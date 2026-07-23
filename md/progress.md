@@ -342,6 +342,22 @@ correctly, but the only PDF test fixture builder produced single-page PDFs, so n
 verified it. Added a multi-page PDF fixture builder and a regression test confirming every page's
 text appears, in page order. No behavior change. 354 -> 355 tests; ruff/mypy clean.
 
+**2026-07-23: closed the remaining input-file audit gaps -- one real bug found and fixed.**
+Investigated the six remaining items via real code execution. Found and fixed a genuine bug: a
+resume image scanned/photographed sideways or upside down OCR'd into garbage (confidence collapsed
+from ~0.93 to ~0.33) because nothing corrected the page's orientation before recognition -- fixed
+by running Tesseract's orientation-detection (OSD) pass first and un-rotating the image, verified
+correct at 90/180/270 degrees. The other five turned out to already behave correctly, just
+untested, and now have regression tests locking that in: empty/zero-byte submissions route to
+manual review cleanly; unsupported extensions (.docx/.rtf/no-extension) are silently (and
+deliberately) skipped; large submissions (100-page PDF, ~950KB text) extract in well under a
+second with no crash; a file's extension can't spoof its real content since dispatch reads magic
+bytes, not filenames; Unicode/emoji filenames work correctly. One item remains a genuine open gap:
+only the English Tesseract language pack is installed in this environment, so non-English (e.g.
+Chinese) resume images would OCR through the wrong language model -- closing that needs installing
+additional language data, an infrastructure change rather than a code fix. 355 -> 365 tests;
+ruff/mypy clean.
+
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
 (per prompt.md §3's stub-and-document rule), and ones that are real-world facts no amount of code

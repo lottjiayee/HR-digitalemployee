@@ -1439,3 +1439,53 @@ reader.pages)`) -- this was correct code with no test ever exercising more than 
 the same hand-rolled low-level PDF object structure to N pages (one `/Page` + one content-stream
 object per page, all listed in `/Pages`' `/Kids`), plus a regression test asserting every page's
 text is present and in page order. No behavior change. 354 -> 355 tests; ruff/mypy clean.
+
+**Follow-up (2026-07-23): closed the rest of the input-file audit's remaining gaps.** Investigated
+each of the six items left open above via real code execution, not just review:
+
+1. **(Real bug, fixed) A resume scanned or photographed sideways/upside down OCR'd into garbage.**
+   Confirmed a plain 90-degree rotation of an otherwise-clean image collapsed Tesseract's average
+   word confidence from ~0.93 to ~0.33, with unreadable text -- nothing corrected the page's
+   orientation before the main recognition pass. **Fixed:** `ocr.py` now runs Tesseract's
+   orientation-and-script-detection (OSD) pass first (`_corrected_for_rotation`) and un-rotates the
+   image before OCR proper. OSD needs enough recognizable text to estimate an orientation at all --
+   on a small/sparse image it raises `TesseractError` ("Too few characters"), in which case the
+   image is used as-is rather than treating a merely-too-sparse-for-OSD image as unparseable.
+   Verified at 90/180/270 degrees: identical text and confidence recovered vs. the upright original.
+2. **(Non-English OCR, confirmed NOT fixable in this environment) Only the English Tesseract
+   language pack is installed** (`pytesseract.get_languages()` returns only `['eng', 'osd']` on
+   this machine) -- `ocr.py` never passes a `lang=` argument, so a Chinese-language (or any
+   non-Latin-script) resume image would be OCR'd through the English model and produce garbage.
+   Closing this needs installing additional Tesseract trained-data files (e.g. `chi_sim`/`chi_tra`)
+   plus a language-selection/detection strategy -- an environment/infrastructure change, not a code
+   fix, and not something that can be verified without the language data actually present. Left
+   open, same category as the homoglyph-substitution and word-form-date-range gaps below.
+3. **(Confirmed already-correct, untested) Empty/zero-byte submissions.** `extract_text(b"")`
+   returns `("", 1.0)` -- empty bytes are valid UTF-8, so this is correctly treated as "confidently
+   read, nothing in it," not unparseable. Confirmed end-to-end: the gateway correctly routes the
+   resulting empty extraction to manual review via the ordinary low-confidence-must-have path, not
+   a crash. Added regression tests at both layers.
+4. **(Confirmed already-correct, untested) Unsupported extensions** (`.docx`, `.rtf`,
+   extensionless files) are silently skipped by `LocalFolderChannelAdapter`'s `_SUPPORTED_EXTENSIONS`
+   gate, per its documented scope (no text-layer/OCR path exists for these formats). Added a
+   regression test locking in this documented behavior.
+5. **(Confirmed already-correct, untested) Large submissions.** A real 100-page PDF (~220KB) and a
+   ~950KB plain-text resume (50,000 skill lines + 20,000 experience-range lines) both extract
+   correctly in well under a second -- no crash, no hang. Added regression tests at both the
+   PDF-extraction and field-extraction layers. (A hard upper size limit, if one is ever wanted, is a
+   product decision -- Streamlit's own upload-widget cap is the only limit in effect today, and
+   deliberately pathological/adversarial-scale inputs beyond what was tested here remain
+   unexplored.)
+6. **(Confirmed already-correct by design, untested) Cross-extension "MIME spoofing."** A file's
+   extension only ever decides whether `LocalFolderChannelAdapter` picks it up at all -- the real
+   dispatch in `pdf_text.py` reads magic bytes and has no `filename` parameter at all, so a
+   `resume.pdf` that's actually JPEG bytes (or vice versa) is parsed correctly by its real content
+   regardless of the mismatched extension. Verified end-to-end (folder adapter -> gateway ->
+   extraction) with a `.pdf`-named file containing real JPEG bytes.
+7. **(Confirmed already-correct, untested) Unicode/emoji filenames** (e.g. "张伟_简历.pdf",
+   "resume_😀.pdf") are read and fall back to the candidate-name-from-stem logic correctly. Added a
+   regression test.
+
+355 -> 365 tests (10 new); ruff/mypy clean. One real bug fixed (rotated-scan OCR); the rest were
+confirmed-correct-but-untested behavior, now locked in by regression tests, except the non-English
+OCR gap, which is a genuine, still-open, environment-dependent limitation.

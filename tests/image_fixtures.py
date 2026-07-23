@@ -28,6 +28,16 @@ def build_image_with_text(lines: list[str], image_format: str = "PNG") -> bytes:
     return buffer.getvalue()
 
 
+def rotate_image_bytes(image_bytes: bytes, degrees: int) -> bytes:
+    """Rotate an already-encoded image and re-encode it as PNG -- simulates a resume scanned or
+    photographed sideways/upside down (a common phone-camera/flatbed-scanner mistake)."""
+    image = Image.open(BytesIO(image_bytes))
+    rotated = image.rotate(degrees, expand=True)
+    buffer = BytesIO()
+    rotated.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 CORRUPTED_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"this claims to be a PNG but has no valid chunk data"
 
 

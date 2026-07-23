@@ -11,6 +11,7 @@ from pdf_fixtures import CORRUPTED_PDF_BYTES, build_pdf_with_text
 
 from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog
 from hr_digital_employee.intake_extraction import ocr
+from hr_digital_employee.intake_extraction.channel_adapters import LocalFolderChannelAdapter
 from hr_digital_employee.intake_extraction.dedup import IdentityDedupService
 from hr_digital_employee.intake_extraction.extraction import ExtractionService
 from hr_digital_employee.intake_extraction.gateway import IngestionGateway
@@ -324,6 +325,59 @@ def test_t1_8_matching_email_across_submissions_merges_profile() -> None:
 
     assert len(results) == 2
     assert results[0][0].candidate_id == results[1][0].candidate_id
+
+
+def test_an_empty_zero_byte_submission_routes_to_manual_review_not_a_crash() -> None:
+    # A zero-byte file (an empty upload, a truncated transfer) decodes as valid-but-empty UTF-8
+    # text -- extract_text() correctly treats that as "confidently read, nothing in it" rather than
+    # unparseable. Nothing is ever extracted from it, so it must land in manual review via the
+    # ordinary low-confidence-must-have path, not raise or get silently dropped.
+    gateway, queue, audit = _build_gateway([_submission(b"", email="empty@example.com")])
+    results = gateway.run_once()
+
+    assert results == []
+    assert len(queue) == 1
+    assert queue.items()[0].reason is QueueReason.LOW_CONFIDENCE_MUST_HAVE
+    assert any(e.action == "low_confidence_must_have_flagged" for e in audit.all_events())
+
+
+@pytest.mark.skipif(
+    not ocr.tesseract_available(),
+    reason="Tesseract binary not found on this machine -- see ASSUMPTIONS.md",
+)
+def test_a_pdf_extension_file_containing_real_jpeg_bytes_is_parsed_by_its_real_content(
+    tmp_path: Path,
+) -> None:
+    # "MIME spoofing" guard: a file's extension only ever decides whether LocalFolderChannelAdapter
+    # picks it up at all (channel_adapters.py's _SUPPORTED_EXTENSIONS gate) -- the actual dispatch
+    # in pdf_text.py reads real magic bytes and never looks at a filename, so a mismatched
+    # extension can't fool it into misreading (or failing to read) the real content.
+    (tmp_path / "resume.pdf").write_bytes(
+        build_image_with_text(
+            [
+                "Skills:",
+                "Java, Kotlin",
+                "",
+                "Working Experience:",
+                "5 years at TechCorp",
+                "",
+                "Education:",
+                "BSc Computer Science",
+            ],
+            image_format="JPEG",
+        )
+    )
+    submissions = LocalFolderChannelAdapter(tmp_path).fetch_new_submissions()
+    gateway, queue, _audit = _build_gateway(
+        [_submission(submissions[0].file_bytes, email="spoof@example.com", name="Spoofed")]
+    )
+
+    results = gateway.run_once()
+
+    assert len(results) == 1
+    assert len(queue) == 0
+    _candidate, extracted = results[0]
+    assert extracted.skills.value == ["Java", "Kotlin"]
 
 
 def test_t1_11_suspected_injection_is_flagged_logged_and_routed_not_scored() -> None:

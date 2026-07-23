@@ -37,6 +37,26 @@ def test_t1_3_extracts_all_four_pillars_with_confidence() -> None:
     assert resume.projects.status is FieldStatus.VERIFIED
 
 
+def test_a_very_large_resume_is_extracted_without_crashing_or_hanging() -> None:
+    # Regression-guard against a large submission (a bulk-exported/duplicated-content resume,
+    # or adversarial padding) crashing or hanging the regex-heuristic extraction -- confirmed a
+    # real ~950KB input (50,000 skill lines + 20,000 experience lines) extracts correctly well
+    # within a second; this only needs to prove no crash/hang, not benchmark exact timing.
+    large_resume = (
+        "Skills:\n"
+        + "Python\n" * 50_000
+        + "Working Experience:\n"
+        + "2015-2020 Something, SomeCorp\n" * 20_000
+        + "Education:\nBachelor of Computer Science\n"
+    )
+
+    resume = ExtractionService().extract(large_resume)
+
+    assert resume.skills.status is FieldStatus.VERIFIED
+    assert len(resume.skills.value or []) == 50_000
+    assert resume.education.status is FieldStatus.VERIFIED
+
+
 def test_low_ocr_confidence_caps_field_confidence_even_when_text_is_long_enough() -> None:
     # Regression, found via a real downloaded resume template image: confidence used to be a pure
     # length heuristic (>=10 characters -> 0.95), so a section header Tesseract happened to OCR
