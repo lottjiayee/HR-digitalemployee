@@ -1391,3 +1391,42 @@ violation this round's other Unicode/i18n fixes address, just in a file none of 
 agents happened to check for Chinese keyword coverage. **Fixed:** added Chinese equivalents (博士/
 硕士/学士/副学士/高中/中学) alongside each English pattern, with a negative lookbehind so "学士"
 (bachelor) doesn't match inside "副学士" (associate). 336 -> 341 tests; ruff/mypy clean.
+
+## Test-coverage audit (2026-07-23): the dashboard's file-upload path had zero test coverage
+
+A full-codebase review of what the input-file/intake path does and doesn't test found one gap
+larger than the rest: `UploadedFilesChannelAdapter` (`channel_adapters.py`) and
+`build_dashboard_rows_from_uploads` (`presentation/dashboard_data.py`) -- the code behind the
+dashboard's `st.file_uploader` widgets, which the app's own logic treats as the *default/priority*
+input mode (`use_uploads = bool(uploaded_resumes or uploaded_jrp)`) -- had no tests at all.
+Every existing `test_app.py` scenario drove only the folder-path fallback
+(`at.text_input(key="resumes_path")`), never the upload widgets.
+
+Closing this required solving one real tooling problem: Streamlit 1.60.0's `testing.v1` harness
+(`AppTest`) has no public API to simulate `st.file_uploader` -- unlike `st.text_input`/`st.button`,
+`element_tree.py` ships no widget wrapper for it, and the only file-registration hook that exists
+(`LocalScriptRunner.register_file`) requires hand-constructing a `WidgetStates` protobuf keyed by
+Streamlit's internal (undocumented, hash-derived) widget IDs -- not a stable thing to depend on.
+**Resolved** by monkeypatching `streamlit.file_uploader` itself (`unittest.mock.patch`) to return
+lightweight fake objects exposing only the `.name`/`.read()` surface app.py actually uses -- since
+`import streamlit as st` binds the same module object the test patches, this lets the *real*
+upload-mode branch in app.py run end to end (temp-file JRP round-trip, `build_dashboard_rows_from_
+uploads` call, session-state wiring, every error branch), without touching any Streamlit internals.
+
+**Added** (13 new tests, no behavior changed -- this was a coverage gap, not a bug):
+- `UploadedFilesChannelAdapter`: one-submission-per-upload, filename-stem candidate-name fallback,
+  channel passthrough, empty upload list, same-uploads-on-every-call (it has no "already seen"
+  cursor, unlike `LocalFolderChannelAdapter` -- callers are expected to construct a fresh adapter
+  per batch, confirmed by test rather than only by docstring).
+- `build_dashboard_rows_from_uploads`: scored output with generated content, empty upload list,
+  and a same-bytes-same-score consistency check against the folder-path adapter (SOP 2.1.1) --
+  the two adapters feed the same pipeline and must never diverge.
+- `app.py` upload-mode branch via the `st.file_uploader` monkeypatch above: successful
+  upload-and-score run, JRP-only upload (missing resumes) error, resumes-only upload (missing JRP)
+  error, an invalid uploaded JRP YAML error, and uploads correctly taking priority over stale
+  leftover text in the folder-path fields.
+
+341 -> 354 tests; ruff/mypy clean. Other gaps identified in the same audit (multi-page PDFs, empty/
+zero-byte files, unsupported extensions, large-file limits, non-English/rotated OCR, cross-
+extension MIME spoofing, Unicode filenames in folder scans) were deliberately left for a later
+round -- scoped out by the user to keep this round focused on the single largest gap.

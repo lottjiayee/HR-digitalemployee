@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from hr_digital_employee.intake_extraction.channel_adapters import LocalFolderChannelAdapter
+from hr_digital_employee.intake_extraction.channel_adapters import (
+    LocalFolderChannelAdapter,
+    UploadedFilesChannelAdapter,
+)
 from hr_digital_employee.intake_extraction.models import SubmissionChannel
 
 
@@ -121,3 +124,57 @@ def test_the_whole_folder_vanishing_between_the_exists_check_and_listing_is_not_
     monkeypatch.setattr(Path, "iterdir", _vanished_iterdir)
 
     assert adapter.fetch_new_submissions() == []
+
+
+def test_uploaded_files_adapter_returns_one_submission_per_upload() -> None:
+    adapter = UploadedFilesChannelAdapter(
+        [
+            ("resume1.pdf", b"Skills:\nPython\n"),
+            ("resume2.jpg", b"fake-jpeg-bytes"),
+        ]
+    )
+
+    submissions = adapter.fetch_new_submissions()
+
+    assert {s.file_bytes for s in submissions} == {b"Skills:\nPython\n", b"fake-jpeg-bytes"}
+
+
+def test_uploaded_files_adapter_candidate_name_falls_back_to_the_filename_stem() -> None:
+    adapter = UploadedFilesChannelAdapter([("jane_doe_resume.pdf", b"Skills:\nPython\n")])
+
+    submissions = adapter.fetch_new_submissions()
+
+    assert submissions[0].candidate_name == "jane_doe_resume"
+    assert submissions[0].candidate_email is None
+    assert submissions[0].candidate_phone is None
+
+
+def test_uploaded_files_adapter_uses_the_given_channel() -> None:
+    adapter = UploadedFilesChannelAdapter(
+        [("resume1.pdf", b"Skills:\nPython\n")], channel=SubmissionChannel.WHATSAPP
+    )
+
+    submissions = adapter.fetch_new_submissions()
+
+    assert submissions[0].channel is SubmissionChannel.WHATSAPP
+
+
+def test_uploaded_files_adapter_handles_an_empty_upload_list() -> None:
+    adapter = UploadedFilesChannelAdapter([])
+
+    assert adapter.fetch_new_submissions() == []
+
+
+def test_uploaded_files_adapter_returns_the_same_uploads_on_every_fetch_call() -> None:
+    # Unlike LocalFolderChannelAdapter (which tracks "already seen" paths across calls, mirroring a
+    # real Email/Teams cursor), UploadedFilesChannelAdapter has no such cursor -- its docstring says
+    # each call returns the same list, since callers are expected to construct a fresh adapter per
+    # batch rather than reuse one across multiple upload rounds.
+    adapter = UploadedFilesChannelAdapter([("resume1.pdf", b"Skills:\nPython\n")])
+
+    first = adapter.fetch_new_submissions()
+    second = adapter.fetch_new_submissions()
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert first[0].file_bytes == second[0].file_bytes == b"Skills:\nPython\n"

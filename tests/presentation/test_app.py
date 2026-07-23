@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -53,6 +54,35 @@ _STRONG_RESUME = (
     b"Working Experience:\n5 years at TechCorp as a backend engineer\n\n"
     b"Education:\nBachelor of Computer Science\n"
 )
+
+
+class _FakeUploadedFile:
+    """Stand-in for Streamlit's real `UploadedFile` -- only exposes the `.name`/`.read()` surface
+    app.py actually uses. Streamlit 1.60.0's `testing.v1` harness (AppTest) has no public API to
+    simulate `st.file_uploader` (unlike `st.text_input`/`st.button`, there's no widget wrapper for
+    it in `element_tree.py`) -- so the upload widgets are monkeypatched at the `streamlit` module
+    level instead, letting the rest of app.py's real upload-mode branch (temp JRP file round-trip,
+    build_dashboard_rows_from_uploads call, session-state wiring, error handling) execute for real.
+    """
+
+    def __init__(self, name: str, data: bytes) -> None:
+        self.name = name
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def _patched_file_uploader(resumes: list[_FakeUploadedFile] | None, jrp: _FakeUploadedFile | None):
+    def fake_file_uploader(label: str, **kwargs: object) -> object:
+        key = kwargs.get("key")
+        if key == "uploaded_resumes":
+            return resumes or []
+        if key == "uploaded_jrp":
+            return jrp
+        raise AssertionError(f"unexpected st.file_uploader key: {key!r}")
+
+    return mock.patch("streamlit.file_uploader", side_effect=fake_file_uploader)
 
 
 def test_running_the_dashboard_shows_a_scored_candidate_and_its_drill_down(
@@ -211,3 +241,97 @@ def test_selecting_the_second_of_two_identically_labeled_candidates_shows_its_ow
     assert not at.exception
     assert f"{strong_row_same_candidate.score.total_score:.2f}" in at.metric[0].value
     assert f"{weak_row.score.total_score:.2f}" not in at.metric[0].value
+
+
+def test_uploading_resume_and_jrp_files_scores_a_candidate() -> None:
+    resumes = [_FakeUploadedFile("candidate.pdf", _STRONG_RESUME)]
+    jrp_file = _FakeUploadedFile("backend-engineer.yaml", _JRP_CONFIG.encode("utf-8"))
+
+    with _patched_file_uploader(resumes, jrp_file):
+        at = AppTest.from_file(_APP_PATH)
+        at.run(timeout=_RUN_TIMEOUT)
+        at.button[0].click()
+        at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert not at.session_state["dashboard_run_error"]
+    assert len(at.session_state["dashboard_rows"]) == 1
+    assert at.session_state["dashboard_rows"][0].score.total_score == 100.0
+    assert "100.0" in at.metric[0].value
+
+
+def test_uploading_only_a_jrp_file_shows_a_clean_error_not_a_crash() -> None:
+    # Uploads take priority over the folder-path fallback the moment either upload widget has a
+    # file in it (`use_uploads = bool(uploaded_resumes or uploaded_jrp)`) -- so a JRP-only upload
+    # must not silently fall through to scanning the (empty) folder-path fields.
+    jrp_file = _FakeUploadedFile("backend-engineer.yaml", _JRP_CONFIG.encode("utf-8"))
+
+    with _patched_file_uploader(None, jrp_file):
+        at = AppTest.from_file(_APP_PATH)
+        at.run(timeout=_RUN_TIMEOUT)
+        at.button[0].click()
+        at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert any("upload at least one resume file" in e.value for e in at.error)
+    assert at.session_state["dashboard_rows"] == []
+
+
+def test_uploading_only_resumes_without_a_jrp_shows_a_clean_error_not_a_crash() -> None:
+    resumes = [_FakeUploadedFile("candidate.pdf", _STRONG_RESUME)]
+
+    with _patched_file_uploader(resumes, None):
+        at = AppTest.from_file(_APP_PATH)
+        at.run(timeout=_RUN_TIMEOUT)
+        at.button[0].click()
+        at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert any("upload a JRP YAML config file" in e.value for e in at.error)
+    assert at.session_state["dashboard_rows"] == []
+
+
+def test_an_invalid_uploaded_jrp_shows_a_clean_error_not_a_crash() -> None:
+    resumes = [_FakeUploadedFile("candidate.pdf", _STRONG_RESUME)]
+    jrp_file = _FakeUploadedFile("broken.yaml", b"not: [valid, jrp, config")
+
+    with _patched_file_uploader(resumes, jrp_file):
+        at = AppTest.from_file(_APP_PATH)
+        at.run(timeout=_RUN_TIMEOUT)
+        at.button[0].click()
+        at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert any("Error loading JRP config" in e.value for e in at.error)
+    assert at.session_state["dashboard_rows"] == []
+
+
+def test_uploaded_resumes_take_priority_over_a_filled_in_folder_path(tmp_path: Path) -> None:
+    # A power user who previously used the folder-path fallback and then also uploads a file
+    # (without clearing the folder-path fields) must get the upload result, not a silent scan of
+    # the leftover folder path -- `use_uploads` is keyed only on whether an upload widget has a
+    # file, never on whether the folder-path fields happen to be non-empty too.
+    weak_dir = tmp_path / "weak"
+    weak_dir.mkdir()
+    (weak_dir / "candidate.pdf").write_bytes(
+        b"Skills:\nCOBOL programming and mainframe systems\n\n"
+        b"Working Experience:\nOne year as a junior mainframe operator\n\n"
+        b"Education:\nHigh school diploma\n"
+    )
+    jrp_path = tmp_path / "backend-engineer.yaml"
+    jrp_path.write_text(_JRP_CONFIG, encoding="utf-8")
+
+    resumes = [_FakeUploadedFile("candidate.pdf", _STRONG_RESUME)]
+    jrp_file = _FakeUploadedFile("backend-engineer.yaml", _JRP_CONFIG.encode("utf-8"))
+
+    with _patched_file_uploader(resumes, jrp_file):
+        at = AppTest.from_file(_APP_PATH)
+        at.run(timeout=_RUN_TIMEOUT)
+        at.text_input(key="resumes_path").set_value(str(weak_dir))
+        at.text_input(key="jrp_path").set_value(str(jrp_path))
+        at.button[0].click()
+        at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert len(at.session_state["dashboard_rows"]) == 1
+    assert at.session_state["dashboard_rows"][0].score.total_score == 100.0

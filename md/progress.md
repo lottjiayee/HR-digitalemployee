@@ -320,6 +320,23 @@ two other round-7 hardening scenarios (cross-language/typographic consistency, i
 obfuscation resistance) against the real reference implementation, plus short clarifying notes
 added to sections 2.1.1, 2.1.2, and 2.7.3.
 
+**2026-07-23: test-coverage audit finds the dashboard's file-upload path entirely untested.** A
+full review of what the input-file/intake path does and doesn't test found one gap bigger than the
+rest: `UploadedFilesChannelAdapter` and `build_dashboard_rows_from_uploads` -- the code behind the
+dashboard's `st.file_uploader` widgets, which the app treats as the *default* input mode over the
+folder-path fallback -- had zero tests; every existing `test_app.py` scenario only drove the
+folder-path fields. Closing it required solving a real tooling gap first: Streamlit 1.60.0's
+`AppTest` testing harness has no public API to simulate `st.file_uploader`. Resolved by
+monkeypatching `streamlit.file_uploader` itself to return lightweight fake files, letting app.py's
+real upload-mode branch (temp-file JRP round-trip, scoring, every error path) run end to end
+without depending on Streamlit's undocumented internals. Added 13 tests: the adapter and
+dashboard-data functions directly, plus five `AppTest`-driven scenarios (successful run,
+missing-resumes error, missing-JRP error, invalid-JRP error, uploads correctly overriding stale
+folder-path text). No behavior changed -- this was a coverage gap, not a bug. Other gaps found in
+the same audit (multi-page PDFs, empty files, unsupported extensions, large-file limits,
+non-English/rotated OCR, cross-extension MIME spoofing, Unicode filenames) were deliberately
+deferred to a later round. 341 -> 354 tests; ruff/mypy clean.
+
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
 (per prompt.md §3's stub-and-document rule), and ones that are real-world facts no amount of code
