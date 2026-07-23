@@ -8,24 +8,51 @@ from io import BytesIO
 from pypdf import PdfWriter
 
 
-def build_pdf_with_text(lines: list[str]) -> bytes:
-    """A real, valid single-page PDF whose text layer reads back as `lines` joined by newlines."""
-    content_lines = []
-    y = 720
-    for line in lines:
-        escaped = line.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
-        content_lines.append(f"BT /F1 12 Tf 72 {y} Td ({escaped}) Tj ET")
-        y -= 20
-    content = "\n".join(content_lines).encode("latin-1")
+def build_multi_page_pdf_with_text(pages: list[list[str]]) -> bytes:
+    """A real, valid multi-page PDF whose text layer, page by page, reads back as each page's own
+    `lines` joined by newlines -- exercises pdf_text.py's page-by-page concatenation
+    (`"\\n".join(page.extract_text() ... for page in reader.pages)`), which a single-page PDF can
+    never reach."""
 
-    objects = [
+    def _content_stream(lines: list[str]) -> bytes:
+        content_lines = []
+        y = 720
+        for line in lines:
+            escaped = line.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
+            content_lines.append(f"BT /F1 12 Tf 72 {y} Td ({escaped}) Tj ET")
+            y -= 20
+        return "\n".join(content_lines).encode("latin-1")
+
+    font_obj_num = 3
+    objects: list[bytes] = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> "
-        b"/MediaBox [0 0 612 792] /Contents 5 0 R >>",
+        b"",  # /Pages -- filled in below once every page object's number is known
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
     ]
+
+    page_obj_nums: list[int] = []
+    for lines in pages:
+        content = _content_stream(lines)
+        page_obj_num = len(objects) + 1
+        content_obj_num = page_obj_num + 1
+        page_obj_nums.append(page_obj_num)
+        objects.append(
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 "
+            + str(font_obj_num).encode()
+            + b" 0 R >> >> /MediaBox [0 0 612 792] /Contents "
+            + str(content_obj_num).encode()
+            + b" 0 R >>"
+        )
+        objects.append(
+            b"<< /Length "
+            + str(len(content)).encode()
+            + b" >>\nstream\n"
+            + content
+            + b"\nendstream"
+        )
+
+    kids = " ".join(f"{num} 0 R" for num in page_obj_nums)
+    objects[1] = f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>".encode()
 
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
@@ -42,6 +69,11 @@ def build_pdf_with_text(lines: list[str]) -> bytes:
     out += b"startxref\n" + str(xref_offset).encode() + b"\n%%EOF"
 
     return bytes(out)
+
+
+def build_pdf_with_text(lines: list[str]) -> bytes:
+    """A real, valid single-page PDF whose text layer reads back as `lines` joined by newlines."""
+    return build_multi_page_pdf_with_text([lines])
 
 
 def build_blank_pdf() -> bytes:

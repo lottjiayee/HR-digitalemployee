@@ -1430,3 +1430,12 @@ uploads` call, session-state wiring, every error branch), without touching any S
 zero-byte files, unsupported extensions, large-file limits, non-English/rotated OCR, cross-
 extension MIME spoofing, Unicode filenames in folder scans) were deliberately left for a later
 round -- scoped out by the user to keep this round focused on the single largest gap.
+
+**Follow-up (2026-07-23): closed the multi-page-PDF gap from the audit above.** `pdf_text.py`'s
+`extract_text()` already concatenated every page (`"\n".join(page.extract_text() ... for page in
+reader.pages)`) -- this was correct code with no test ever exercising more than one page, since
+`tests/pdf_fixtures.py`'s only PDF builder (`build_pdf_with_text`) hardcodes a single-page
+`/Kids`/`Count`. **Added** `build_multi_page_pdf_with_text(pages: list[list[str]])`, generalizing
+the same hand-rolled low-level PDF object structure to N pages (one `/Page` + one content-stream
+object per page, all listed in `/Pages`' `/Kids`), plus a regression test asserting every page's
+text is present and in page order. No behavior change. 354 -> 355 tests; ruff/mypy clean.

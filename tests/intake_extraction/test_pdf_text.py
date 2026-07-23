@@ -8,6 +8,7 @@ from pdf_fixtures import (
     CORRUPTED_PDF_BYTES,
     build_blank_pdf,
     build_encrypted_pdf,
+    build_multi_page_pdf_with_text,
     build_pdf_with_text,
 )
 
@@ -33,6 +34,23 @@ def test_real_pdf_text_layer_is_extracted() -> None:
     assert "Skills:" in text
     assert "Python, SQL" in text
     assert confidence == 1.0
+
+
+def test_multi_page_pdf_concatenates_every_pages_text_in_order() -> None:
+    # Regression-guard: extract_text() joins `page.extract_text()` across every page in
+    # `reader.pages`, not just the first -- build_pdf_with_text() above only ever produces a
+    # single-page PDF, so nothing previously exercised the multi-page concatenation itself.
+    pdf_bytes = build_multi_page_pdf_with_text(
+        [["Skills:", "Python, SQL"], ["Working Experience:", "5 years at TechCorp"]]
+    )
+    result = extract_text(pdf_bytes)
+
+    assert result is not None
+    text, confidence = result
+    assert confidence == 1.0
+    for expected in ("Skills:", "Python, SQL", "Working Experience:", "5 years at TechCorp"):
+        assert expected in text
+    assert text.index("Python, SQL") < text.index("Working Experience:")
 
 
 def test_image_only_pdf_with_no_text_layer_is_unparseable() -> None:

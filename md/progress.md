@@ -337,6 +337,11 @@ the same audit (multi-page PDFs, empty files, unsupported extensions, large-file
 non-English/rotated OCR, cross-extension MIME spoofing, Unicode filenames) were deliberately
 deferred to a later round. 341 -> 354 tests; ruff/mypy clean.
 
+**2026-07-23: closed the multi-page-PDF gap.** `pdf_text.py` already concatenated every PDF page
+correctly, but the only PDF test fixture builder produced single-page PDFs, so nothing ever
+verified it. Added a multi-page PDF fixture builder and a regression test confirming every page's
+text appears, in page order. No behavior change. 354 -> 355 tests; ruff/mypy clean.
+
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
 (per prompt.md §3's stub-and-document rule), and ones that are real-world facts no amount of code
