@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import pytesseract
 from PIL import Image, UnidentifiedImageError
@@ -54,8 +55,15 @@ def tesseract_available() -> bool:
         return _find_fallback_tesseract_path() is not None
 
 
-def extract_text(file_bytes: bytes) -> str | None:
+def extract_text(file_bytes: bytes) -> tuple[str, float] | None:
     """OCR an image's text content, or None if it can't be read (routes to manual review).
+
+    Returns `(text, confidence)`, where `confidence` is Tesseract's own average per-word
+    recognition confidence (0-1) across every word it found -- not a length-based guess. This lets
+    a caller distinguish clean OCR output from a dense/multi-column/icon-heavy layout Tesseract
+    struggled with (confirmed via a real resume template: ~0.41 average confidence on a garbled
+    two-column layout vs. ~0.95 on a clean single-column one) rather than trusting a "long enough
+    to look plausible" heuristic on text that may be unreadable garbage (see ASSUMPTIONS.md).
 
     A submitted image is untrusted input (same threat model as injection_screening.py's text
     defenses): a PNG/etc. header can declare far more pixels than its actual data backs up, and
@@ -69,12 +77,27 @@ def extract_text(file_bytes: bytes) -> str | None:
 
     try:
         text = pytesseract.image_to_string(image)
+        word_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
     except pytesseract.TesseractNotFoundError:
         if not _use_fallback_tesseract_path():
             return None
         text = pytesseract.image_to_string(image)
+        word_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
 
-    return text if text.strip() else None
+    if not text.strip():
+        return None
+    return text, _average_word_confidence(word_data)
+
+
+def _average_word_confidence(word_data: dict[str, list[Any]]) -> float:
+    # Tesseract reports -1 for boxes that aren't recognized words (lines/paragraphs/blocks in the
+    # same hierarchy `image_to_data` returns) -- only the >=0 entries are real per-word confidence
+    # scores (0-100), which this averages and rescales to the 0-1 scale used everywhere else in
+    # this codebase's confidence fields.
+    scores = [int(value) for value in word_data["conf"] if int(value) >= 0]
+    if not scores:
+        return 0.0
+    return (sum(scores) / len(scores)) / 100.0
 
 
 def _find_fallback_tesseract_path() -> Path | None:

@@ -16,16 +16,23 @@ from hr_digital_employee.intake_extraction.pdf_text import extract_text
 
 
 def test_non_pdf_bytes_pass_through_as_plain_text() -> None:
-    assert extract_text(b"Skills:\nPython\n") == "Skills:\nPython\n"
+    result = extract_text(b"Skills:\nPython\n")
+
+    assert result is not None
+    text, confidence = result
+    assert text == "Skills:\nPython\n"
+    assert confidence == 1.0
 
 
 def test_real_pdf_text_layer_is_extracted() -> None:
     pdf_bytes = build_pdf_with_text(["Skills:", "Python, SQL"])
-    text = extract_text(pdf_bytes)
+    result = extract_text(pdf_bytes)
 
-    assert text is not None
+    assert result is not None
+    text, confidence = result
     assert "Skills:" in text
     assert "Python, SQL" in text
+    assert confidence == 1.0
 
 
 def test_image_only_pdf_with_no_text_layer_is_unparseable() -> None:
@@ -53,7 +60,8 @@ def test_non_pdf_binary_that_is_not_valid_text_is_unparseable() -> None:
 )
 def test_image_bytes_are_dispatched_to_ocr() -> None:
     image_bytes = build_image_with_text(["Skills", "Python, SQL"])
-    text = extract_text(image_bytes)
+    result = extract_text(image_bytes)
 
-    assert text is not None
+    assert result is not None
+    text, _confidence = result
     assert "Skills" in text

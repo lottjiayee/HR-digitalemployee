@@ -24,7 +24,9 @@ the system.
 
 - **FR-1**: Ingest PDF resumes from Email and Teams
 - **FR-2**: Extract structured fields with confidence scores
-- **FR-3**: Must-have fields below 85% confidence route to manual review, never auto-disqualify
+- **FR-3**: Must-have fields below 85% confidence route to manual review, never auto-disqualify --
+  confidence is capped by the real OCR recognition confidence when a submission came from an
+  image, not derived from text length alone (a 2026-07-23 fix; see below and ASSUMPTIONS.md)
 - **FR-4**: Unparseable files route to manual queue; candidate notified to resubmit
 - **FR-5**: Deduplicate across channels; ambiguous matches go to a human, never auto-merge
 - **NFR-1**: Parser accuracy ≥95%, validated against ≥200 annotated resumes before automatic gating
@@ -33,6 +35,13 @@ the system.
 ## 4. Key Design Constraints
 
 - A field that cannot be extracted is marked `Unverified` — never coerced to "Not Met."
+- Field confidence reflects extraction *quality*, not just presence: for OCR'd images, Tesseract's
+  own average per-word recognition confidence caps the score (`ocr.py`/`pdf_text.py`/
+  `extraction.py`), so a section header that happened to OCR correctly followed by unreadable
+  garbled content doesn't score as confidently as clean text just because it's long enough. A real
+  PDF's text layer or plain-text passthrough has no such uncertainty and isn't capped (confirmed:
+  ~0.41 confidence on a real, poorly-OCR'd resume template image vs. ~0.95-1.0 on clean/PDF/text
+  input — see ASSUMPTIONS.md and `tests/test_pipeline.py`'s format-comparison tests).
 - Hidden text (white-on-white, near-zero font, off-page content) and instruction-like patterns are
   stripped/detected before extraction output is finalized (feeds Module 3's injection defense, but
   the stripping itself happens here).
@@ -69,7 +78,8 @@ the system.
 - [ ] Extraction: Projects
 - [ ] Extraction: Working Experience
 - [ ] Extraction: Education
-- [ ] Confidence scoring per field
+- [x] Confidence scoring per field — length-based, capped by real OCR recognition confidence for
+      image submissions (not a length-only guess for OCR'd content)
 - [ ] Identity matching (email/phone/name+resume similarity)
 - [ ] Auto-merge on confident match; flag-to-human on ambiguous match
 - [ ] Parser version stamping

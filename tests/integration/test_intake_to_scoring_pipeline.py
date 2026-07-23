@@ -115,3 +115,51 @@ def test_a_real_resume_flows_from_intake_through_to_a_score() -> None:
     # Python+SQL 2/2, 5/5 years, Bachelor meets Bachelor, 2/2 projects -> everything maxes out.
     assert score.total_score == 100.0
     assert score.tier is Tier.HIGH_MATCH
+
+
+def test_a_comma_separated_skills_line_still_matches_individual_required_skills() -> None:
+    # Regression found via a real downloaded resume (not a synthetic fixture): a candidate
+    # clearly listing "C, Java, ..., Linux, C#, ..." as one comma-separated line scored 0.0/100 on
+    # Mandatory Skills against required_skills=("Java", "C#", "Linux") -- extraction.py kept the
+    # whole line as one unsplit list item, and exact skill-name matching can never match a
+    # required skill against a whole line. Proves the fix at the level the bug actually manifested
+    # (a real Score), not just extraction.py's own field-level unit tests.
+    resume_bytes = (
+        b"Skills:\nC, Java, Sdlc, Software Development, Linux, C#, Communication Skills\n\n"
+        b"Working Experience:\n5 years at TechCorp\n\nEducation:\nBSc\n"
+    )
+    submission = RawSubmission(
+        channel=SubmissionChannel.EMAIL,
+        candidate_email="jane@example.com",
+        candidate_phone=None,
+        candidate_name="Jane Doe",
+        file_bytes=resume_bytes,
+        received_at=datetime.now(UTC),
+    )
+    gateway = IngestionGateway(
+        channel_adapters=[_StaticChannelAdapter([submission])],
+        extraction_service=ExtractionService(),
+        dedup_service=IdentityDedupService(),
+        manual_review_queue=ManualReviewQueue(),
+        audit_log=InMemoryAuditLog(),
+    )
+    _candidate, extracted = gateway.run_once()[0]
+    profile = build_candidate_profile(extracted)
+
+    jrp = JRP(
+        jrp_id="swe",
+        role_name="Software Engineer",
+        version=1,
+        weight_template=WeightTemplate.GENERAL,
+        weighted_criteria=(
+            WeightedCriterion(
+                dimension=Dimension.MANDATORY_SKILLS,
+                weight=100.0,
+                curve=MatchingCurve.LINEAR,
+                required_skills=("Java", "C#", "Linux"),
+            ),
+        ),
+    )
+    score = ScoringEngine().score(profile, jrp, extracted.parser_version)
+
+    assert score.total_score == 100.0

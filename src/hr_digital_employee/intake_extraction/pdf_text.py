@@ -18,8 +18,21 @@ from hr_digital_employee.intake_extraction import ocr
 PDF_MAGIC_BYTES = b"%PDF-"
 
 
-def extract_text(file_bytes: bytes) -> str | None:
-    """Return the submission's text content, or None if it cannot be read.
+_EXACT_TEXT_CONFIDENCE = 1.0
+"""Confidence for text extracted deterministically -- a real PDF's text layer or a plain-text
+passthrough -- as opposed to OCR's probabilistic per-word recognition. Not a judgement that the
+resume's *content* is trustworthy, only that the bytes-to-text step itself introduced no
+uncertainty of its own."""
+
+
+def extract_text(file_bytes: bytes) -> tuple[str, float] | None:
+    """Return `(text, confidence)`, or None if the submission cannot be read.
+
+    `confidence` (0-1) reflects the bytes-to-text step's own reliability -- always
+    `_EXACT_TEXT_CONFIDENCE` for a PDF's text layer or the plain-text fallback (exact, not a
+    guess), or Tesseract's real average per-word OCR confidence for an image (see ocr.py). Module
+    2's extraction confidence scoring uses this to avoid treating a garbled OCR result as
+    trustworthy just because it happens to be long enough (see ASSUMPTIONS.md).
 
     Bytes that are neither a PDF nor a recognized image format are passed through as
     already-plain-text -- this keeps non-PDF test fixtures and any future plain-text channel
@@ -32,7 +45,7 @@ def extract_text(file_bytes: bytes) -> str | None:
         if ocr.is_image(file_bytes):
             return ocr.extract_text(file_bytes)
         try:
-            return file_bytes.decode("utf-8")
+            return file_bytes.decode("utf-8"), _EXACT_TEXT_CONFIDENCE
         except UnicodeDecodeError:
             return None
 
@@ -44,4 +57,4 @@ def extract_text(file_bytes: bytes) -> str | None:
     except PyPdfError:
         return None
 
-    return text if text.strip() else None
+    return (text, _EXACT_TEXT_CONFIDENCE) if text.strip() else None

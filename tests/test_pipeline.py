@@ -6,7 +6,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from image_fixtures import build_image_with_text
+from pdf_fixtures import build_pdf_with_text
+
 from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog
+from hr_digital_employee.intake_extraction import ocr
 from hr_digital_employee.intake_extraction.models import Candidate
 from hr_digital_employee.pipeline import candidate_label, run_pipeline
 from hr_digital_employee.scoring_engine.jrp_config import load_jrp_from_yaml
@@ -71,6 +76,89 @@ def test_candidate_label_falls_back_through_name_email_phone_id() -> None:
 
     only_id = Candidate(candidate_id="id-3", email=None, phone=None, name=None)
     assert candidate_label(only_id) == "id-3"
+
+
+_CONSISTENCY_LINES = [
+    "Skills:",
+    "Python, SQL",
+    "",
+    "Working Experience:",
+    "5 years at TechCorp",
+    "",
+    "Education:",
+    "Bachelor of Computer Science",
+]
+
+
+def test_identical_resume_content_scores_the_same_as_a_real_pdf_and_as_plain_text(
+    tmp_path: Path,
+) -> None:
+    # SOP 2.1.1's consistency guarantee -- "identical qualifications must produce identical
+    # outcomes regardless of resume format" -- exercised at the pipeline level (Modules 1+2
+    # together), not just extraction.py in isolation, and with a genuine PDF byte stream (via
+    # pypdf's real text-layer extraction), not just a plain-text file wearing a ".pdf" name.
+    jrp_path = tmp_path / "backend-engineer.yaml"
+    jrp_path.write_text(JRP_CONFIG, encoding="utf-8")
+    jrp = load_jrp_from_yaml(jrp_path)
+
+    pdf_dir = tmp_path / "pdf"
+    pdf_dir.mkdir()
+    (pdf_dir / "candidate.pdf").write_bytes(build_pdf_with_text(_CONSISTENCY_LINES))
+    pdf_results, _pdf_queue = run_pipeline(pdf_dir, jrp, InMemoryAuditLog())
+
+    text_dir = tmp_path / "text"
+    text_dir.mkdir()
+    (text_dir / "candidate.pdf").write_bytes("\n".join(_CONSISTENCY_LINES).encode("utf-8"))
+    text_results, _text_queue = run_pipeline(text_dir, jrp, InMemoryAuditLog())
+
+    assert len(pdf_results) == 1
+    assert len(text_results) == 1
+    assert pdf_results[0].score.total_score == text_results[0].score.total_score
+    assert pdf_results[0].score.tier == text_results[0].score.tier
+    # Confidence, not just score, should also match: both are deterministic bytes-to-text steps
+    # (pypdf's real text layer vs. plain-text passthrough) with no OCR-style uncertainty, so
+    # pdf_text.py stamps both with the same exact-text confidence (1.0) rather than one of them
+    # looking artificially less trustworthy than the other.
+    assert pdf_results[0].extracted.skills.confidence == text_results[0].extracted.skills.confidence
+    assert pdf_results[0].extracted.skills.confidence == 0.95  # length-based cap, not OCR-capped
+
+
+@pytest.mark.skipif(
+    not ocr.tesseract_available(),
+    reason="Tesseract binary not found on this machine -- see ASSUMPTIONS.md",
+)
+def test_identical_resume_content_scores_the_same_via_ocr_image_too(tmp_path: Path) -> None:
+    # Same consistency guarantee, extended to a genuine OCR'd image -- the format axis SOP 2.1.1
+    # most explicitly calls out ("scanned documents ... unconventional layouts").
+    jrp_path = tmp_path / "backend-engineer.yaml"
+    jrp_path.write_text(JRP_CONFIG, encoding="utf-8")
+    jrp = load_jrp_from_yaml(jrp_path)
+
+    image_dir = tmp_path / "image"
+    image_dir.mkdir()
+    (image_dir / "candidate.png").write_bytes(build_image_with_text(_CONSISTENCY_LINES))
+    image_results, _image_queue = run_pipeline(image_dir, jrp, InMemoryAuditLog())
+
+    text_dir = tmp_path / "text"
+    text_dir.mkdir()
+    (text_dir / "candidate.pdf").write_bytes("\n".join(_CONSISTENCY_LINES).encode("utf-8"))
+    text_results, _text_queue = run_pipeline(text_dir, jrp, InMemoryAuditLog())
+
+    assert len(image_results) == 1
+    assert len(text_results) == 1
+    assert image_results[0].score.total_score == text_results[0].score.total_score
+    assert image_results[0].score.tier == text_results[0].score.tier
+    # Unlike the PDF-vs-text comparison above, confidence here is NOT expected to match: an image
+    # goes through real OCR (genuine per-word recognition uncertainty), a real PDF/plain-text
+    # submission doesn't (see ocr.py/pdf_text.py -- 2026-07-23's confidence-scoring fix). The
+    # plain-text path gets the full length-based 0.95; a clean synthetic image still legitimately
+    # dips below that once real OCR confidence caps it, without falling anywhere near the 0.85
+    # must-have threshold real garbled OCR would hit (see ASSUMPTIONS.md's ~0.41-vs-~0.95 finding).
+    image_confidence = image_results[0].extracted.skills.confidence
+    text_confidence = text_results[0].extracted.skills.confidence
+    assert text_confidence == 0.95
+    assert image_confidence <= text_confidence
+    assert image_confidence >= 0.85
 
 
 def test_candidate_label_strips_embedded_newlines() -> None:

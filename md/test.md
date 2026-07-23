@@ -18,7 +18,7 @@ here pass.
 | T1.1 | FR-1 | Send a valid PDF resume to the designated email inbox | Resume appears in the system as a new intake record within the defined polling/webhook latency | |
 | T1.2 | FR-1 | Send a valid PDF resume via the designated Teams channel | Resume appears as a new intake record | |
 | T1.3 | FR-2 | Submit a resume with clear Skills/Projects/Experience/Education sections | All four pillars extracted as structured fields, each with a confidence score | |
-| T1.4 | FR-3 | Submit a resume where a must-have field's extraction confidence is engineered to fall below 85% | Field is NOT used in gating; candidate routes to manual-review queue; candidate is not disqualified | |
+| T1.4 | FR-3 | Submit a resume where a must-have field's extraction confidence is engineered to fall below 85% | Field is NOT used in gating; candidate routes to manual-review queue; candidate is not disqualified — demonstrated with a real poorly-OCR'd image (not just a synthetic/engineered value): confidence is capped by Tesseract's actual per-word recognition confidence, not text length alone (2026-07-23, see ASSUMPTIONS.md) | |
 | T1.5 | FR-3 | Submit a resume with a field that cannot be extracted at all (missing section) | Field marked `Unverified`, not `Not Met`; no automatic disqualification | |
 | T1.6 | FR-4 | Submit an image-only (scanned, non-OCR) PDF | File routes to manual queue; candidate receives a resubmission notification; nothing is silently dropped | |
 | T1.7 | FR-4 | Submit an encrypted/password-protected PDF | Same as T1.6 | |

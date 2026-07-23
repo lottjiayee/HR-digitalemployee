@@ -1,6 +1,6 @@
 # HR Digital Employee — Development Progress
 
-**Last updated:** 2026-07-22
+**Last updated:** 2026-07-23
 **Source docs:** [requirement.md](./requirement.md), [design.md](./design.md), [modules/](./modules/)
 
 Status values used throughout: `Not Started` → `In Progress` → `Blocked` → `Done`
@@ -205,6 +205,21 @@ score's outcome between two identical calls; the "raw text never reaches an LLM"
 comment-only, not code-enforced; `SqliteAuditLog` having no schema-versioning path) — see
 ASSUMPTIONS.md. 261 -> 272 tests; ruff/mypy clean.
 
+**2026-07-23 security + logic review, round 6:** two parallel reviews (Module 5's presentation
+layer, specifically since it's the newest code and only manually smoke-tested; Module 6/7 plus a
+cross-module `AuditLog` usage grep), found and fixed 3 more real bugs (full write-ups in
+ASSUMPTIONS.md) -- also surfaced by actually running realistic resumes through the CLI while
+building the SOP's new Appendix A reference sample run: (1) `RawSubmission.display_identifier`
+never fell back to `candidate_name`, so every manual-review-queue entry and audit event for a
+local-folder submission (the only channel adapter built so far) showed `"unknown"` instead of an
+actionable identifier; (2) a blank "Resumes folder" field in the Module 5 dashboard silently scanned
+the process's working directory instead of erroring; (3) the drill-down's overall-score `st.metric`
+colored every tier's delta green with an "up" arrow, including Low Match. Two further findings
+documented rather than code-patched (bigger design changes, not quick fixes): the JRP editor's
+"Save YAML" button never routes through `JRPRepository`/`AuditLog`, so real weight/must-have edits
+today produce zero audit trail; the dashboard's per-run `InMemoryAuditLog` is discarded, not
+persisted or exposed. 280 -> 284 tests; ruff/mypy clean.
+
 **2026-07-23: Module 5 first slice -- comparison table + drill-down dashboard.** Built
 `presentation/app.py`, a read-only Streamlit dashboard (comparison table across every scored
 candidate, per-candidate drill-down with score breakdown/summary/interview questions/red flags),
@@ -220,6 +235,55 @@ either way; fixed to wrap `OSError` the same way YAML-syntax errors already are.
 ruff/mypy clean; manually smoke-tested by launching the real Streamlit server and confirming it
 serves successfully, on top of `AppTest`-driven tests that exercise the actual pipeline run,
 drill-down selection, and error path.
+
+**2026-07-23: real-resume test finds a genuine 0-vs-100 scoring bug.** The user supplied an actual
+downloaded resume PDF (not a synthetic fixture) to run through the pipeline. Its skills were one
+comma-separated line; `extraction.py` only ever split on newlines, so the whole line stayed one
+unsplit item and exact skill-name matching could never match a required skill against it --
+scoring the same real candidate against `required_skills=("Java", "C#", "Linux")` (all three
+genuinely listed) came back **0.0/100**. Fixed with a dedicated skills-only comma+newline split
+(kept separate from `projects`, where a bullet's own prose routinely contains commas); re-ran the
+real file after the fix and confirmed 0.0 -> 100.0 for the same inputs. Also fixed: the same real
+file has its contact block (name/email/phone/city) at the very end of the document with no
+closing header, so the email and phone number were being absorbed into the "education" field --
+`_drop_contact_info_lines()` now filters email/phone-shaped lines out of every section. On
+request, also fixed the category-label case rather than leaving it as a limitation:
+`_strip_category_label()` drops everything up to a skills line's first colon before the
+comma-split runs, so "Programming Languages: C++, Python, JavaScript" now splits cleanly into
+`["C++", "Python", "JavaScript"]` instead of leaving the label glued to "C++". See ASSUMPTIONS.md
+for the full write-up, including the one limitation still deliberately left alone (a bare
+name/city in a trailing contact block isn't reliably distinguishable from real content, so it
+isn't stripped). 286 -> 292 tests; ruff/mypy clean.
+
+**2026-07-23: a second real-image test finds confidence scoring was blind to OCR quality.** The
+user supplied a real downloaded resume *template image* (dense two-column, icon-heavy layout).
+OCR on it was poor as expected (the already-documented local-Tesseract tradeoff), but the real
+finding: `_confidence_for()` was a pure length heuristic, so a section whose header happened to
+OCR correctly followed by unreadable garbled content still scored `VERIFIED`/`0.95`/`meets-must-
+have-confidence=True` -- SOP 2.1.1's confidence gate, meant to catch exactly this, never fired.
+Fixed by wiring Tesseract's own average per-word OCR confidence (via `image_to_data()`) through
+`ocr.py` -> `pdf_text.py` -> `gateway.py` -> `ExtractionService.extract()`, which now caps the
+length-based confidence with it when OCR was involved (`None` for a real PDF text layer or plain
+text, unaffected). Measured directly: ~0.41 confidence on the garbled real file vs. ~0.95 on a
+clean one. Re-ran the real file through the actual gateway end to end: it now correctly routes to
+manual review (`LOW_CONFIDENCE_MUST_HAVE`) instead of silently scoring on garbage. 292 -> 294
+tests; ruff/mypy clean. See ASSUMPTIONS.md for the full write-up.
+
+**2026-07-23 review of the above: one regression found in the new contact-info stripping.**
+`_is_phone_like_line()` (added alongside the comma-split/category-label fixes above) flags any
+line whose only characters are digits/`+()-. ` with >=7 digits -- but a bare tenure line like
+"2019 - 2023" under a job title (a common, legitimate layout) satisfies that same shape (8 digits,
+only `-`/space), so it was being silently deleted from the Experience section before
+`profile_adapter.py`'s year-range fallback ever saw it. Verified end to end: a candidate with
+"Senior Developer at TechCorp / 2019 - 2023 / Led backend development..." scored
+`years_of_experience == 0.0` instead of `4.0`, with no error or manual-review flag -- a silent
+scoring defect, not a missing feature. **Fixed:** `_is_phone_like_line()` now excludes any line
+matching a bare year-range shape (`YYYY - YYYY` or `YYYY - Present/Current`) before the
+digit-count check, mirroring `profile_adapter.py`'s/`red_flags.py`'s own `_YEAR_RANGE_PATTERN`
+(kept as a separate local copy, consistent with this codebase's existing duplicated-regex
+convention -- see ASSUMPTIONS.md). Two new regression tests confirm both the date-range and
+open-ended (`- Present`) cases survive, while real phone numbers are still caught. 294 -> 296
+tests; ruff/mypy clean.
 
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
@@ -283,7 +347,8 @@ named person to exist), but the system should not go live until they're resolved
 - [x] Injection screening — heuristic stub (hidden-text stripping + instruction-pattern detection)
 - [x] Manual-review queue — in-memory only, no SLA monitoring yet
 - [x] Extraction: Skills / Projects / Experience / Education — heuristic stub, not the real parser
-- [x] Confidence scoring per field
+- [x] Confidence scoring per field -- length-based, capped by Tesseract's real per-word OCR
+      confidence when the source was an image (not a length-only guess for OCR'd content)
 - [x] Identity matching & dedup — heuristic name-similarity, not a real fuzzy-match library
 - [x] Parser version stamping
 - [ ] 200-resume accuracy validation (≥95%) — not started, needs a real annotated dataset

@@ -945,6 +945,105 @@ either a bigger design change than this pass's scope or a genuine judgment call 
 
 272 tests (261 -> 272; eleven new regression tests); ruff/mypy clean.
 
+## Real-resume test (2026-07-23): comma-separated skills scored 0% despite the candidate having
+## every required skill
+
+The user supplied a real, downloaded "Software Engineer Resume.pdf" (a generic template-style
+resume) to run through the pipeline -- not a synthetic fixture. Its Skills section is one
+comma-separated line: `C, Java, Sdlc, Software Development, Linux, C#, Communication Skills`.
+Extraction kept this as a single, unsplit list item (`_extract_list_field` only ever split on
+newlines). Scored against `required_skills=("Java", "C#", "Linux")` -- all three genuinely listed
+-- `total_score` came back **0.0**: exact skill-name matching (both `IdentitySkillOntology` and
+`SynonymMapSkillOntology` require normalized *equality*, never substring/fuzzy matching) can never
+match a required skill against a whole unsplit line.
+
+Comma-separated skill lists are, if anything, more common in real resumes than one-skill-per-line
+-- this isn't a rare template quirk. **Fixed:** `extraction.py` gained a dedicated
+`_extract_skills_field` (skills only, not projects) that splits each line on commas as well as
+newlines. Projects deliberately keep the old newline-only splitting: a project bullet routinely
+contains commas within its own prose (e.g. "Led a team of 5, delivering 2 weeks early"), and
+comma-splitting there would fragment one project into meaningless pieces. Re-ran the exact real
+file after the fix: `total_score` went from 0.0 to 100.0 for the same required skills.
+
+**Follow-up, on request:** the category-label case above was then fixed too, rather than left as a
+standing limitation. `test_real_world_resume_unrecognized_headers_are_absorbed_by_previous_
+section`'s real-world fixture has a skills line with a category-label prefix ("Programming
+Languages: C++, Python, JavaScript") -- comma-splitting alone gave `["Programming Languages:
+C++", "Python", "JavaScript", ...]`, individually matchable except that "C++" stayed glued to its
+label. Added `_strip_category_label()`: everything up to the first colon in a skills line is
+dropped before the comma-split runs, since a colon in a skills line is used almost exclusively for
+a category label ("Languages:", "Tools:", "Frameworks:"), never as part of an actual skill name.
+`"Programming Languages: C++, Python, JavaScript"` -> `["C++", "Python", "JavaScript"]`, all three
+individually matchable. A line with no colon (e.g. "Chinese (Fluent), English (Intermediate)") is
+untouched.
+
+**Also fixed, on request, at a deliberately narrow scope:** this same real file has its contact
+block (name/email/phone/location) at the very end of the document, after the last recognized
+header (Education), with no closing header of its own -- `_split_sections` absorbs everything to
+end-of-document into whatever section preceded it, so the extracted "education" field ended up
+with the candidate's contact details appended. Doesn't affect scoring (degree-level detection just
+looks for keywords like "bachelor" anywhere in the text) or must-have gating, so this is a
+data-hygiene issue, not a correctness one. **Fixed:** `_drop_contact_info_lines()` filters any
+line matching a high-precision email pattern or a whole-line phone-number pattern (>=7 digits,
+only digits/`+()-.` characters) out of every section's captured text, not just the last one --
+an email or phone number is never legitimate Skills/Experience/Education content, so this is safe
+regardless of where such a line lands. Deliberately does NOT try to strip a bare name or city
+("Jenny Ashcroft", "Los Angeles, CA" both still remain in the real file's `education` field after
+this fix) -- neither is reliably distinguishable from real section content with a comparably
+high-precision pattern, and chasing that would risk stripping legitimate short lines elsewhere;
+left as a known, accepted remainder, same judgment-call standard as the "Programming Languages:"
+prefix case above.
+
+286 -> 292 tests; ruff/mypy clean.
+
+## Second real-image test (2026-07-23): confidence scoring was a pure length heuristic, blind to
+## whether OCR actually produced coherent text
+
+The user supplied a second real file, a downloaded resume *template image* (a dense two-column
+design with a photo, icon-labeled contact fields, and a colored sidebar). OCR on it was, as
+expected, poor -- this matches the already-documented local-Tesseract accuracy tradeoff -- but the
+real finding is what the pipeline did with a *bad* OCR result: "WORK EXPERIENCE" happened to OCR
+correctly as a header, and everything after it OCR'd into unreadable garbage ("08 Posmon Tus (c)
+sh mma ce..."). `_confidence_for()` only ever checked `len(section_text) >= 10`, so this garbage
+field came back `VERIFIED`, confidence `0.95`, `meets_must_have_confidence=True` -- exactly as
+trusted as clean text. SOP 2.1.1's own confidence gate ("any field used by a must-have criterion
+below 85% confidence must not enter gating, routed to manual review instead") existed specifically
+to catch this and never fired, because nothing fed it a real quality signal.
+
+**Fixed:** `ocr.py`'s `extract_text()` now returns `(text, confidence)`, where `confidence` is
+Tesseract's own average per-word recognition confidence from `pytesseract.image_to_data()` (0-1,
+rescaled from Tesseract's native 0-100) -- not a length guess. Measured directly against both real
+files: ~0.41 average confidence on the garbled two-column template vs. ~0.95 on a clean
+single-column synthetic fixture and ~0.93-0.94 on the existing clean-layout regression fixtures --
+a wide, reliable margin either side of the 0.85 must-have threshold. `pdf_text.py`'s `extract_text
+()` now returns the same `(text, confidence)` shape throughout: `1.0` for a real PDF's text layer
+or the plain-text passthrough (both deterministic, not a probabilistic guess -- there is no
+"OCR-style" uncertainty to signal there), or OCR's real confidence when the submission is an
+image. `gateway.py` threads this confidence value from `extract_text()` into `ExtractionService.
+extract(text, ocr_confidence)`, and `_confidence_for()` now returns `min(length_based,
+ocr_confidence)` when an OCR confidence is present, capping the old length-only heuristic rather
+than replacing it (a one-character match is still less trustworthy than a full paragraph, even
+from a perfectly-OCR'd image). `ocr_confidence` defaults to `None` for every caller that already
+passes plain text directly (all of `ai_content`'s and `scoring_engine`'s existing tests) --
+completely unaffected, since `None` means "no OCR involved, use the length heuristic exactly as
+before."
+
+Deliberately a document-level average, not per-section: attributing individual OCR word
+confidences back to whichever *section* they landed in would need real word-level position
+tracking threaded through `_split_sections()`, a materially bigger change than this fix. A single
+whole-document average is coarser but correctly catches the demonstrated failure mode (the whole
+image was poorly OCR'd, not one isolated section) -- revisit only if a real example demonstrates
+one section being unreadable while others are fine on the same document.
+
+Re-ran the real template file through the actual `IngestionGateway` end to end after the fix:
+before, it would have silently produced a `VERIFIED`/high-confidence `Score` input from garbage
+text; after, it correctly routes to the manual-review queue with `LOW_CONFIDENCE_MUST_HAVE`.
+
+294 tests (290 -> 294: two new `ocr.py` tests for the confidence signal on real images, one
+`extraction.py` test proving the cap works with a synthetic garbled-but-long section content, kept
+deterministic rather than depending on Tesseract's exact real-world output); five existing OCR/
+pdf_text tests updated for the new `(text, confidence)` return shape; ruff/mypy clean.
+
 ## Module 5, first slice (2026-07-23): comparison table + drill-down dashboard
 
 Module 5 (Presentation Layer) was entirely "Not Started" until now. Per the user's own
@@ -1021,3 +1120,71 @@ section above for the one slice that is built -- no notification cards, no pipel
 stats/filtering/visualizations, no JRP-config-in-dashboard, no Pass/Reject action, no persistent
 candidate store, no API server), and Module 6 entirely (empty placeholder package only, per
 `md/prompt.md` §5's repository layout). See `md/progress.md` for the authoritative checklist.
+
+## Security + logic review, round 6 (2026-07-23): three more real bugs found and fixed
+
+Two parallel reviews (Module 5's presentation layer, specifically targeted since it's the newest
+code and had only been manually smoke-tested; Module 6/7 plus a cross-module `AuditLog` usage
+grep), each finding verified against the real code (one via Streamlit's `AppTest`, reproducing the
+rendered proto directly) before fixing. Also found while building the reference sample run
+documented in the SOP's new Appendix A (see below): actually running realistic resumes through the
+CLI, not just synthetic test fixtures, surfaced a bug none of the previous five review rounds'
+fixtures happened to trigger.
+
+**1. (High, cross-cutting) `RawSubmission.display_identifier` never fell back to `candidate_name`,
+only email/phone/`"unknown"`.** `LocalFolderChannelAdapter` -- the only channel adapter built so
+far -- never populates email/phone, only `candidate_name` (the filename). Every manual-review-queue
+entry and every audit event referencing a local-folder submission therefore showed the literal
+string `"unknown"` instead of an identifier HR could act on, in `cli.py`'s report, the Module 5
+dashboard's manual-review list, and `text_extraction_log.py`'s log headers alike -- found
+independently by both review rounds above, and by manually running four realistic resumes through
+the CLI (see Appendix A: one candidate legitimately routed to manual review printed as `"unknown"`
+instead of its filename). The existing test for this property (`test_models.py`) only ever
+constructed submissions with `candidate_name=None`, so this exact realistic shape -- name set, no
+email/phone -- had never been exercised. **Fixed:** `display_identifier`
+(`intake_extraction/models.py`) now falls back through email -> phone -> name -> `"unknown"`; added
+`test_display_identifier_falls_back_to_name_for_local_folder_style_submissions` alongside the
+existing fallback test.
+
+**2. (Medium-High) A blank "Resumes folder" field in the Module 5 dashboard silently scanned the
+process's working directory instead of erroring.** `Path("")` resolves to `.`, which always
+`exists()`, so `presentation/app.py`'s unvalidated `st.text_input` let `LocalFolderChannelAdapter`
+happily ingest and score whatever unrelated `.pdf`/image files sit in the launch directory as
+pseudo-candidates, with no indication the field was ever empty -- confirmed directly. The JRP path
+input already fails cleanly here (`JRPConfigError`); only the resumes-folder input lacked equivalent
+validation. **Fixed:** a blank value now shows "Resumes folder is required." before any pipeline
+run; a non-blank but non-existent path now shows "Resumes folder not found: ..." instead of
+whatever `OSError` happened to surface partway through the pipeline. Two new regression tests in
+`tests/presentation/test_app.py`.
+
+**3. (Medium) The candidate drill-down's overall-score `st.metric` colored every tier's delta green
+with an "up" arrow, including Low Match.** `st.metric(..., delta=tier_label)` defaults an
+unrecognized (non-numeric, no leading `-`) delta string to `direction: UP, color: GREEN` --
+confirmed directly by inspecting the rendered proto for a Low Match candidate. A tier label isn't a
+change-over-time value in the first place, so the worst possible tier rendered with the same
+positive-looking indicator as the best one, on the one screen HR is meant to use to judge standing.
+**Fixed:** `delta_color="off"` (`presentation/app.py`), confirmed via the proto now reading
+`color: GRAY` regardless of tier. One new regression test.
+
+284 tests (280 -> 284: four new regression tests, one existing test extended in place); ruff/mypy
+clean.
+
+**Findings documented rather than code-patched this round** (real, verified, but each a bigger
+design change than a quick fix -- same category as the ontology-versioning/LLM-input-flow gaps
+above):
+- `jrp_editor/app.py`'s "Save YAML" button writes directly via `Path.write_text`, with zero call
+  into `JRPRepository`/`AuditLog` anywhere in `jrp_editor/` -- confirmed via a repo-wide grep,
+  `JRPRepository` is referenced only in its own module and one docstring. SOP 2.2.5 ("every change
+  to weights or thresholds is logged: who, when, why") is correctly implemented by
+  `JRPRepository.save()`, but it's dead code with respect to the only real HR-facing JRP-editing
+  tool that exists today -- every real weight/must-have edit currently produces zero audit trail.
+  A real fix means routing the editor's save path through `JRPRepository` (which needs a
+  `jrp_id`/version/actor/reason the current one-page form doesn't collect yet), not a one-line
+  patch.
+- `presentation/app.py`'s dashboard constructs a fresh `InMemoryAuditLog()` per "Run" click,
+  passed into the pipeline, then never stores or exposes it -- every dashboard-driven run's entire
+  audit trail (manual-review routing reasons, processing events) is generated and immediately
+  discarded when the object goes out of scope, unlike `cli.py`'s explicit `--audit-db` flag for the
+  same data. This undercuts SOP 1.6's traceability principle for what is likely to become HR's
+  primary interactive tool. A real fix needs a persistence/wiring decision (a shared `--audit-db`-
+  style option, or a session-level `SqliteAuditLog`), not just a variable move.

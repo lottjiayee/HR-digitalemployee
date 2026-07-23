@@ -68,8 +68,14 @@ class RawSubmission:
 
     @property
     def display_identifier(self) -> str:
-        """Best available identifier for logging/audit -- never blank, never raises."""
-        return self.candidate_email or self.candidate_phone or "unknown"
+        """Best available identifier for logging/audit -- never blank, never raises.
+
+        Falls back through email -> phone -> name before giving up: `LocalFolderChannelAdapter`
+        (the only adapter built so far) never populates email/phone, only `candidate_name` (the
+        filename), so omitting this fallback made every manual-review-queue entry and audit event
+        show "unknown" instead of an identifier HR could actually act on.
+        """
+        return self.candidate_email or self.candidate_phone or self.candidate_name or "unknown"
 
 
 class QueueReason(enum.Enum):

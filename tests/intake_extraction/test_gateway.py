@@ -171,7 +171,7 @@ def test_t1_1b_valid_real_pdf_is_processed_end_to_end() -> None:
     assert len(results) == 1
     assert len(queue) == 0
     _candidate, extracted = results[0]
-    assert extracted.skills.value == ["Python, SQL"]
+    assert extracted.skills.value == ["Python", "SQL"]
 
 
 def test_real_world_functional_resume_pdf_with_no_skills_heading_routes_to_manual_review() -> None:
@@ -237,7 +237,7 @@ def test_image_resume_is_ocrd_and_processed_end_to_end() -> None:
     assert len(results) == 1
     assert len(queue) == 0
     _candidate, extracted = results[0]
-    assert extracted.skills.value == ["Python, SQL"]
+    assert extracted.skills.value == ["Python", "SQL"]
 
 
 def test_extracted_text_is_appended_to_the_text_log_when_one_is_configured(

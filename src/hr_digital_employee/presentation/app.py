@@ -47,17 +47,30 @@ jrp_path = st.text_input("JRP YAML file", key="jrp_path")
 
 if st.button("Run"):
     st.session_state.dashboard_run_error = None
-    try:
-        jrp = load_jrp_from_yaml(Path(jrp_path))
-        new_rows, new_manual_review_queue = build_dashboard_rows(
-            Path(resumes_path), jrp, InMemoryAuditLog()
-        )
-        st.session_state.dashboard_rows = new_rows
-        st.session_state.dashboard_manual_review_queue = new_manual_review_queue
-    except JRPConfigError as error:
-        st.session_state.dashboard_run_error = f"Error loading JRP config: {error}"
-    except OSError as error:
-        st.session_state.dashboard_run_error = f"Error reading resumes folder: {error}"
+    if not resumes_path.strip():
+        # Path("") resolves to the current working directory, which always exists -- left
+        # unvalidated, a blank field would silently scan and score whatever unrelated files
+        # happen to sit in the launch directory instead of erroring, unlike the JRP path below
+        # (an empty/bad JRP path is already caught via JRPConfigError).
+        st.session_state.dashboard_run_error = "Resumes folder is required."
+    else:
+        try:
+            resumes_folder = Path(resumes_path)
+            if not resumes_folder.is_dir():
+                st.session_state.dashboard_run_error = (
+                    f"Resumes folder not found: {resumes_path}"
+                )
+            else:
+                jrp = load_jrp_from_yaml(Path(jrp_path))
+                new_rows, new_manual_review_queue = build_dashboard_rows(
+                    resumes_folder, jrp, InMemoryAuditLog()
+                )
+                st.session_state.dashboard_rows = new_rows
+                st.session_state.dashboard_manual_review_queue = new_manual_review_queue
+        except JRPConfigError as error:
+            st.session_state.dashboard_run_error = f"Error loading JRP config: {error}"
+        except OSError as error:
+            st.session_state.dashboard_run_error = f"Error reading resumes folder: {error}"
 
 if st.session_state.dashboard_run_error:
     st.error(st.session_state.dashboard_run_error)
@@ -95,6 +108,11 @@ if rows:
         "Overall score",
         f"{selected_row.score.total_score:.2f}",
         selected_row.score.tier.value.replace("_", " "),
+        # A tier label isn't a change-over-time value, and st.metric otherwise defaults an
+        # unrecognized (non-numeric, no leading "-") delta string to a green "up" arrow --
+        # which rendered Low Match, the worst tier, with the same positive-looking indicator
+        # as High Match. delta_color="off" shows the tier as plain text, no arrow or color.
+        delta_color="off",
     )
     if not selected_row.score.passed_must_have:
         st.warning(

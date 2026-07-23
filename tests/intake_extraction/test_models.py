@@ -36,12 +36,14 @@ def test_meets_must_have_confidence_false_when_unverified_even_if_confidence_hig
     assert field_.meets_must_have_confidence is False
 
 
-def _submission(email: str | None, phone: str | None) -> RawSubmission:
+def _submission(
+    email: str | None, phone: str | None, name: str | None = None
+) -> RawSubmission:
     return RawSubmission(
         channel=SubmissionChannel.EMAIL,
         candidate_email=email,
         candidate_phone=phone,
-        candidate_name=None,
+        candidate_name=name,
         file_bytes=b"",
         received_at=datetime.now(UTC),
     )
@@ -51,6 +53,17 @@ def test_display_identifier_prefers_email() -> None:
     assert _submission(email="a@example.com", phone="123").display_identifier == "a@example.com"
 
 
-def test_display_identifier_falls_back_to_phone_then_unknown() -> None:
+def test_display_identifier_falls_back_to_phone_then_name_then_unknown() -> None:
     assert _submission(email=None, phone="123").display_identifier == "123"
+    assert _submission(email=None, phone=None, name="jane-doe-resume").display_identifier == (
+        "jane-doe-resume"
+    )
     assert _submission(email=None, phone=None).display_identifier == "unknown"
+
+
+def test_display_identifier_falls_back_to_name_for_local_folder_style_submissions() -> None:
+    # LocalFolderChannelAdapter (the only channel adapter built so far) sets candidate_name from
+    # the filename but never email/phone -- this is the realistic shape of every submission the
+    # current pipeline actually processes, not just a synthetic case.
+    submission = _submission(email=None, phone=None, name="3_alex_junior")
+    assert submission.display_identifier == "3_alex_junior"

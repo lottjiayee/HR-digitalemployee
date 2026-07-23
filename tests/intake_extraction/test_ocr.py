@@ -38,11 +38,26 @@ def test_plain_text_bytes_are_not_recognized_as_image() -> None:
 @requires_tesseract
 def test_real_image_text_is_ocrd() -> None:
     image_bytes = build_image_with_text(["Skills", "Python, SQL"])
-    text = ocr.extract_text(image_bytes)
+    result = ocr.extract_text(image_bytes)
 
-    assert text is not None
+    assert result is not None
+    text, confidence = result
     assert "Skills" in text
     assert "Python" in text
+    assert 0.0 <= confidence <= 1.0
+
+
+@requires_tesseract
+def test_a_clean_image_gets_a_high_confidence_score() -> None:
+    # Regression: confidence used to be a pure length heuristic (any section >= 10 characters
+    # scored 0.95, regardless of whether the text was actually coherent) -- this is Tesseract's
+    # own average per-word recognition confidence, not a guess.
+    image_bytes = build_image_with_text(["Skills", "Python, SQL", "Working Experience"])
+    result = ocr.extract_text(image_bytes)
+
+    assert result is not None
+    _text, confidence = result
+    assert confidence >= 0.85
 
 
 @requires_tesseract
@@ -66,9 +81,15 @@ def test_sidebar_layout_with_icons_still_returns_text_without_crashing() -> None
     # This deliberately does NOT assert exact wording -- Tesseract's output on this kind of layout
     # is version-dependent and known to be imperfect. It only guards against the dispatch path
     # crashing or silently regressing to None on a layout this shape.
-    text = ocr.extract_text(build_sidebar_resume_image())
+    result = ocr.extract_text(build_sidebar_resume_image())
 
-    assert text is not None
+    assert result is not None
+    _text, confidence = result
+    # Confirmed via the real resume this fixture reproduces: a dense multi-column/icon layout
+    # scores noticeably lower than a clean one (see test_a_clean_image_gets_a_high_confidence_
+    # score's >=0.85 clean-layout baseline) -- not asserting an exact number since Tesseract's
+    # output on this kind of layout is version-dependent, but the signal itself must exist.
+    assert 0.0 <= confidence <= 1.0
 
 
 @requires_tesseract
@@ -77,9 +98,10 @@ def test_clean_layout_with_isolated_icon_row_ocrs_body_text_accurately() -> None
     # icons confined to one contact-info row (not interleaved throughout multiple columns) was
     # observed to OCR the surrounding body text almost perfectly (see ASSUMPTIONS.md). Unlike the
     # sidebar test, this one DOES assert exact wording -- that's the point of the contrast.
-    text = ocr.extract_text(build_clean_layout_with_icon_row_image())
+    result = ocr.extract_text(build_clean_layout_with_icon_row_image())
 
-    assert text is not None
+    assert result is not None
+    text, _confidence = result
     assert "PROFESSIONAL EXPERIENCE" in text
     assert "Facility Property Manager | February 2017" in text
     assert "Silicon Valley Tech Park, San Jose, CA" in text

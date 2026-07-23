@@ -67,6 +67,47 @@ _SECTION_HEADERS: dict[str, re.Pattern[str]] = {
 }
 
 
+_EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.\w+")
+
+# Mirrors profile_adapter.py's/red_flags.py's own _YEAR_RANGE_PATTERN (each module keeps its own
+# copy deliberately -- see ASSUMPTIONS.md's "duplicated year-range regex" entry). A standalone
+# tenure line like "2019 - 2023" under a job title or degree is a common, legitimate resume
+# layout that also happens to satisfy _is_phone_like_line's digit/separator check (8 digits, only
+# "-"/space chars) -- confirmed this silently deleted the only date signal for a job entry,
+# zeroing out years_of_experience for an otherwise fully-qualified candidate. Two bare years in the
+# 1900s/2000s joined by a dash is unambiguously a date range, never a phone number, regardless of
+# digit count.
+_YEAR_RANGE_LINE_PATTERN = re.compile(
+    r"^\s*(?:19|20)\d{2}\s*-\s*(?:(?:19|20)\d{2}|present|current)\s*$", re.IGNORECASE
+)
+
+
+def _is_phone_like_line(line: str) -> bool:
+    stripped = line.strip().rstrip(".")
+    if _YEAR_RANGE_LINE_PATTERN.match(stripped):
+        return False
+    digit_count = sum(char.isdigit() for char in stripped)
+    if digit_count < 7:
+        return False
+    return all(char.isdigit() or char in "+()-. " for char in stripped)
+
+
+def _is_contact_info_line(line: str) -> bool:
+    return bool(_EMAIL_PATTERN.search(line)) or _is_phone_like_line(line)
+
+
+def _drop_contact_info_lines(section_text: str) -> str:
+    """Drops any email/phone-shaped line from a section's captured text -- a resume whose own
+    contact block sits at the very end of the document (a real, if less common, layout) has no
+    closing header of its own, so it gets silently absorbed into whichever section comes last (see
+    ASSUMPTIONS.md). An email or phone number is never legitimate Skills/Experience/Education
+    content, so filtering these two specific, high-precision patterns out is safe regardless of
+    where in a section they land -- unlike a bare name or city, which isn't reliably
+    distinguishable from real content and is left alone."""
+    lines = [line for line in section_text.splitlines() if not _is_contact_info_line(line)]
+    return "\n".join(lines).strip()
+
+
 def _split_sections(text: str) -> dict[str, str]:
     """Locate each section header and slice the text between consecutive header starts."""
     markers: list[tuple[int, int, str]] = []  # (header_start, content_start, name)
@@ -79,46 +120,97 @@ def _split_sections(text: str) -> dict[str, str]:
     sections: dict[str, str] = {}
     for index, (_header_start, content_start, name) in enumerate(markers):
         end = markers[index + 1][0] if index + 1 < len(markers) else len(text)
-        sections[name] = text[content_start:end].strip()
+        sections[name] = _drop_contact_info_lines(text[content_start:end].strip())
     return sections
 
 
-def _confidence_for(section_text: str) -> float:
-    """Small heuristic: non-trivial content in a matched section scores high confidence."""
+def _strip_category_label(line: str) -> str:
+    """Drops a leading category label from a skills line (e.g. "Programming Languages: C++,
+    Python" -> " C++, Python") -- otherwise the label stays glued to the first split skill
+    ("Programming Languages: C++") instead of being recognized as a header for the list, not part
+    of any one skill. A resume skills line uses a colon this way almost exclusively for category
+    labels, never as part of an actual skill name, so everything up to the first colon is dropped
+    whenever one is present."""
+    _label, colon, rest = line.partition(":")
+    return rest if colon else line
+
+
+def _confidence_for(section_text: str, ocr_confidence: float | None) -> float:
+    """Length is still a floor signal (a one-character match is less trustworthy than a full
+    paragraph), but it's no longer the only one: `ocr_confidence` -- Tesseract's own average
+    per-word recognition confidence, when this text came from OCR rather than a PDF text layer or
+    plain-text passthrough (see pdf_text.py/ocr.py) -- caps it. Without this, a section header
+    Tesseract happened to recognize correctly, followed by unreadable garbled content, scored
+    exactly as confidently "VERIFIED" as clean text (confirmed via a real resume template: a
+    "WORK EXPERIENCE" section of OCR gibberish still scored 0.95/meets-must-have-confidence,
+    because the heuristic only ever checked whether the section was "long enough"). `None` means
+    no OCR was involved -- the length heuristic alone applies, unchanged from before."""
     if not section_text:
         return 0.0
-    return 0.95 if len(section_text) >= 10 else 0.5
+    length_based = 0.95 if len(section_text) >= 10 else 0.5
+    if ocr_confidence is None:
+        return length_based
+    return min(length_based, ocr_confidence)
 
 
 class ExtractionService:
     """Parses raw resume text into the four structured pillars with per-field confidence."""
 
-    def extract(self, raw_text: str) -> ExtractedResume:
+    def extract(self, raw_text: str, ocr_confidence: float | None = None) -> ExtractedResume:
         sections = _split_sections(raw_text)
 
         return ExtractedResume(
-            skills=self._extract_list_field(sections.get("skills", "")),
-            projects=self._extract_list_field(sections.get("projects", "")),
-            experience=self._extract_text_field(sections.get("experience", "")),
-            education=self._extract_text_field(sections.get("education", "")),
+            skills=self._extract_skills_field(sections.get("skills", ""), ocr_confidence),
+            projects=self._extract_list_field(sections.get("projects", ""), ocr_confidence),
+            experience=self._extract_text_field(sections.get("experience", ""), ocr_confidence),
+            education=self._extract_text_field(sections.get("education", ""), ocr_confidence),
             parser_version=PARSER_VERSION,
         )
 
-    def _extract_list_field(self, section_text: str) -> ExtractedField[list[str]]:
+    def _extract_list_field(
+        self, section_text: str, ocr_confidence: float | None
+    ) -> ExtractedField[list[str]]:
         if not section_text:
             return ExtractedField(value=None, confidence=0.0, status=FieldStatus.UNVERIFIED)
         items = [line.strip("-• \t") for line in section_text.splitlines() if line.strip()]
         return ExtractedField(
             value=items,
-            confidence=_confidence_for(section_text),
+            confidence=_confidence_for(section_text, ocr_confidence),
             status=FieldStatus.VERIFIED,
         )
 
-    def _extract_text_field(self, section_text: str) -> ExtractedField[str]:
+    def _extract_skills_field(
+        self, section_text: str, ocr_confidence: float | None
+    ) -> ExtractedField[list[str]]:
+        # Skills are also split on commas, not just newlines, unlike _extract_list_field's other
+        # caller (projects): a real downloaded resume was found scoring 0% on every mandatory
+        # skill despite listing them, because a single comma-separated line (e.g. "C, Java, SQL,
+        # Linux") was kept as one unsplit list item -- no exact skill-name match is possible
+        # against a whole line. Projects deliberately do NOT get this treatment: a project bullet
+        # routinely contains commas within its own prose (e.g. "Led a team of 5, delivering 2
+        # weeks early"), and splitting on every comma there would fragment one project into
+        # several meaningless fragments.
+        if not section_text:
+            return ExtractedField(value=None, confidence=0.0, status=FieldStatus.UNVERIFIED)
+        items = [
+            piece.strip("-• \t")
+            for line in section_text.splitlines()
+            for piece in _strip_category_label(line).split(",")
+            if piece.strip("-• \t")
+        ]
+        return ExtractedField(
+            value=items,
+            confidence=_confidence_for(section_text, ocr_confidence),
+            status=FieldStatus.VERIFIED,
+        )
+
+    def _extract_text_field(
+        self, section_text: str, ocr_confidence: float | None
+    ) -> ExtractedField[str]:
         if not section_text:
             return ExtractedField(value=None, confidence=0.0, status=FieldStatus.UNVERIFIED)
         return ExtractedField(
             value=section_text,
-            confidence=_confidence_for(section_text),
+            confidence=_confidence_for(section_text, ocr_confidence),
             status=FieldStatus.VERIFIED,
         )

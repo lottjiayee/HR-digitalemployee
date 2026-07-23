@@ -84,12 +84,13 @@ class IngestionGateway:
     def _process_submission(
         self, submission: RawSubmission
     ) -> tuple[Candidate, ExtractedResume] | None:
-        raw_text = extract_text(submission.file_bytes)
-        if raw_text is None:
+        extraction_result = extract_text(submission.file_bytes)
+        if extraction_result is None:
             self._route_to_manual_review(
                 submission, QueueReason.UNPARSEABLE_FILE, "unparseable file"
             )
             return None
+        raw_text, ocr_confidence = extraction_result
 
         screening = screen(raw_text)
         if screening.suspected_injection:
@@ -103,7 +104,7 @@ class IngestionGateway:
         if self._text_log is not None:
             self._text_log.append(submission, screening.cleaned_text)
 
-        extracted = self._extraction_service.extract(screening.cleaned_text)
+        extracted = self._extraction_service.extract(screening.cleaned_text, ocr_confidence)
         if self._has_low_confidence_must_have(extracted):
             self._route_to_manual_review(
                 submission,
