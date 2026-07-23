@@ -153,16 +153,29 @@ class IngestionGateway:
         detail: str,
         version: str = _NO_PARSER_VERSION,
     ) -> None:
-        self._audit_log.record(
-            AuditEvent(
-                actor="ingestion_gateway",
-                entity_ref=submission.display_identifier,
-                action=_MANUAL_REVIEW_AUDIT_ACTION[reason],
-                reason=detail,
-                timestamp=datetime.now(UTC),
-                version=version,
+        # The audit write is best-effort here, not load-bearing for the enqueue below: an audit
+        # backend failure (a locked/unavailable database, most plausibly two HR staff running the
+        # CLI/dashboard concurrently against the same --audit-db file) previously propagated
+        # straight out of this method, uncaught -- crashing run_once() entirely and dropping this
+        # submission from BOTH the audit log and the manual-review queue, along with every other
+        # already-processed result in the same batch. Manual review exists precisely to catch
+        # cases automation can't handle cleanly; a downed audit backend must not also cost the
+        # submission its own safety net. The missing audit trail entry in that case is a known,
+        # accepted gap (see ASSUMPTIONS.md) -- there is no secondary logging channel in this system
+        # to fall back to.
+        try:
+            self._audit_log.record(
+                AuditEvent(
+                    actor="ingestion_gateway",
+                    entity_ref=submission.display_identifier,
+                    action=_MANUAL_REVIEW_AUDIT_ACTION[reason],
+                    reason=detail,
+                    timestamp=datetime.now(UTC),
+                    version=version,
+                )
             )
-        )
+        except Exception:  # see comment above: must not block the enqueue below
+            pass
         self._manual_review_queue.enqueue(
             ManualReviewItem(
                 submission=submission,

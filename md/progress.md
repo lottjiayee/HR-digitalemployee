@@ -285,6 +285,41 @@ convention -- see ASSUMPTIONS.md). Two new regression tests confirm both the dat
 open-ended (`- Present`) cases survive, while real phone numbers are still caught. 294 -> 296
 tests; ruff/mypy clean.
 
+**2026-07-23 security + logic review, round 7:** four parallel adversarial reviews split by
+module (`intake_extraction`; `scoring_engine`; `ai_content`/`fairness_compliance`;
+`governance_audit`/`presentation`/`cli`/`jrp_editor`), each agent required to reproduce every
+finding by executing the real code, found and fixed 18 more real bugs (full write-ups in
+ASSUMPTIONS.md) -- more than any prior round. A Unicode/internationalization cluster (zero-width
+characters defeating injection screening, full-width CJK punctuation breaking skills splitting,
+NFC/NFD normalization mismatches failing skill-ontology matches, en/em dashes invisible to
+date-range parsing, full-width digits breaking phone dedup) was the single largest group, none of
+which prior rounds' fixtures happened to exercise. Also fixed: NaN/Infinity bypassing every
+numeric-requirement validation in the scoring engine (a config typo could create a permanent,
+invisible must-have gate no candidate could ever pass); "Present"/"Current" ongoing roles being
+invisible to every red-flag detector; a self-contradicting verification+gap interview-question
+pair for mid-range dimensions; a blank JRP must-have label crashing both the CLI and dashboard;
+an audit-log write failure crashing an entire processing batch (paired with making
+`SqliteAuditLog` detect a genuinely incompatible schema eagerly, at construction, so that fix
+didn't silently mask the one scenario that really does need to fail loudly); the dashboard's
+candidate drill-down showing the wrong candidate's score when two rows share a label; and
+candidate labels not stripping raw ANSI escape sequences (untrusted data could spoof console
+output). Two findings documented rather than code-patched: homoglyph substitution still defeats
+injection screening (needs a confusables table); word-form date ranges ("2015 to 2020") remain
+unparsed. 296 -> 336 tests; ruff/mypy clean.
+
+**2026-07-23: one more real bug found while building the SOP blueprint's Appendix B.** Running an
+identical candidate through the pipeline once in English and once in Chinese, to demonstrate the
+consistency guarantee for the blueprint document, surfaced a genuine bug:
+`profile_adapter.py`'s degree keywords were English-only, so "计算机科学学士" (Bachelor of
+Computer Science) scored `EducationLevel.NONE` instead of `BACHELOR` -- the same candidate scored
+100.0 in English but 85.0 in Chinese. Fixed by adding Chinese degree-keyword equivalents
+(博士/硕士/学士/副学士/高中/中学), with a negative lookbehind so "学士" doesn't match inside
+"副学士" (associate degree). 336 -> 341 tests; ruff/mypy clean. The blueprint document itself
+(`HR_Digital_Employee_Blueprint (2).docx`) was updated with a new Appendix B verifying this and
+two other round-7 hardening scenarios (cross-language/typographic consistency, injection-screening
+obfuscation resistance) against the real reference implementation, plus short clarifying notes
+added to sections 2.1.1, 2.1.2, and 2.7.3.
+
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
 (per prompt.md §3's stub-and-document rule), and ones that are real-world facts no amount of code

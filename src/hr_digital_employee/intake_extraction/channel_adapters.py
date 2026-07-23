@@ -4,6 +4,10 @@ Real Email/Teams/WhatsApp integrations are an open decision (md/progress.md §2a
 defines the interface every adapter must satisfy and ships a local-filesystem stub so the rest of
 the pipeline is fully testable without a real vendor integration. See ASSUMPTIONS.md for what a
 real adapter must satisfy.
+
+`UploadedFilesChannelAdapter` accepts in-memory (filename, bytes) pairs -- e.g. from Streamlit's
+`st.file_uploader` -- so the dashboard can feed browser-uploaded files directly into the pipeline
+without writing anything to disk.
 """
 
 from __future__ import annotations
@@ -89,3 +93,36 @@ class LocalFolderChannelAdapter:
                 )
             )
         return submissions
+
+
+class UploadedFilesChannelAdapter:
+    """In-memory adapter: wraps a list of (filename, file_bytes) pairs as resume submissions.
+
+    Intended for the Streamlit dashboard's `st.file_uploader` widget -- the browser sends bytes
+    directly, so no local folder or disk write is needed. Each call to `fetch_new_submissions`
+    returns the same list (callers are expected to construct a fresh adapter per batch).
+    """
+
+    def __init__(
+        self,
+        uploads: list[tuple[str, bytes]],
+        channel: SubmissionChannel = SubmissionChannel.EMAIL,
+    ) -> None:
+        self._uploads = uploads
+        self._channel = channel
+
+    def fetch_new_submissions(self) -> list[RawSubmission]:
+        """Return one RawSubmission per uploaded file. The filename stem (minus extension) is used
+        as the candidate name, mirroring `LocalFolderChannelAdapter`'s fallback behaviour."""
+        return [
+            RawSubmission(
+                channel=self._channel,
+                candidate_email=None,
+                candidate_phone=None,
+                # Strip extension for a cleaner display label, same as LocalFolderChannelAdapter.
+                candidate_name=Path(filename).stem,
+                file_bytes=file_bytes,
+                received_at=datetime.now(UTC),
+            )
+            for filename, file_bytes in self._uploads
+        ]

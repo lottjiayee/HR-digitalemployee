@@ -23,7 +23,11 @@ def explain_score(score: Score, jrp: JRP) -> Explanation:
     A failed must-have criterion is noted alongside the score, not in place of it (SOP 2.2.2/2.2.4,
     2026-07-22 revision) -- the candidate still sees the full basis for their result."""
     tier_label = score.tier.value.replace("_", " ")
-    summary = f"Overall score: {score.total_score:.1f}/100 ({tier_label}) for {jrp.role_name}."
+    # Two decimals, not one: `engine.py` already rounds `total_score` to 2 places, and a value
+    # like 79.95 displayed at 1 decimal ("80.0") sits right at the high_match boundary (80.0),
+    # looking like a tier-classification bug even though "mid match" is correct -- the identical
+    # regression already fixed in cli.py, just not ported here (round 6).
+    summary = f"Overall score: {score.total_score:.2f}/100 ({tier_label}) for {jrp.role_name}."
     if not score.passed_must_have:
         reasons = "; ".join(score.failed_must_have_labels)
         summary += f" Must-have requirement(s) not met: {reasons}."

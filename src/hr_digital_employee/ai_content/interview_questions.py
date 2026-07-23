@@ -64,8 +64,14 @@ def generate_interview_questions(
             gap_asked = True
 
     if score.breakdown:
-        strongest = max(score.breakdown, key=lambda r: r.curve_score)
-        weakest = min(score.breakdown, key=lambda r: r.curve_score)
+        # Ranked (not separate max()/min() calls): when every dimension ties at the same
+        # mid-range score, max() and min() both resolve to the *first* tied element (Python's tie-
+        # break is "first occurrence" for both), so a second tied dimension was silently dropped
+        # from consideration entirely -- sorting once and taking the two ends gives each of two
+        # tied dimensions its own distinct entry instead.
+        ranked = sorted(score.breakdown, key=lambda r: r.curve_score)
+        weakest = ranked[0]
+        strongest = ranked[-1]
         # Guarded by more than "not verification_asked"/"not gap_asked": if every dimension
         # already cleared the *opposite* threshold (e.g. every dimension is a strength), the
         # fallback's own candidate would be a dimension that already got that opposite-angle
@@ -73,9 +79,22 @@ def generate_interview_questions(
         # scored strongly" and "your profile shows a gap" about the same dimension). In that case
         # there's genuinely nothing left in the "opposite" direction to probe, so it's skipped
         # rather than forced.
-        if not verification_asked and strongest.curve_score > LOW_SCORE_THRESHOLD:
+        ask_verification = not verification_asked and strongest.curve_score > LOW_SCORE_THRESHOLD
+        ask_gap = not gap_asked and weakest.curve_score < HIGH_SCORE_THRESHOLD
+        if strongest.dimension == weakest.dimension and ask_verification and ask_gap:
+            # Only one dimension survives to fall back on (a single-dimension JRP, or every
+            # dimension tied at the identical mid-range score) -- asking both angles about the
+            # exact same dimension is the identical self-contradiction the guard above is meant to
+            # prevent, just reached a different way. Pick whichever angle it sits closer to instead
+            # of asking both.
+            midpoint = (LOW_SCORE_THRESHOLD + HIGH_SCORE_THRESHOLD) / 2
+            if strongest.curve_score >= midpoint:
+                ask_gap = False
+            else:
+                ask_verification = False
+        if ask_verification:
             questions.append(_verification_question(_DIMENSION_LABELS[strongest.dimension]))
-        if not gap_asked and weakest.curve_score < HIGH_SCORE_THRESHOLD:
+        if ask_gap:
             questions.append(_gap_question(_DIMENSION_LABELS[weakest.dimension]))
 
     questions.append(

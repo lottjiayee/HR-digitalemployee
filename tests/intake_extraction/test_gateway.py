@@ -132,6 +132,49 @@ def test_an_unexpected_exception_during_processing_routes_to_manual_review_not_a
     assert any(e.action == "processing_error_flagged" for e in audit_log.all_events())
 
 
+class _AlwaysFailsAuditLog:
+    """Stands in for a real audit backend being unavailable (e.g. a locked SQLite file from a
+    second concurrent process) -- every `record()` call raises, exactly like a real
+    `SqliteAuditLog` would under `sqlite3.OperationalError: database is locked`."""
+
+    def record(self, event: object) -> None:
+        raise RuntimeError("simulated audit backend failure")
+
+    def events_for(self, entity_ref: str) -> list[object]:
+        return []
+
+
+def test_an_audit_log_failure_during_manual_review_routing_does_not_crash_the_batch() -> None:
+    # Regression (round 6): `_route_to_manual_review` called `audit_log.record()` with no
+    # exception boundary of its own -- if the audit backend failed (e.g. a locked shared
+    # --audit-db file, plausible with two HR staff running the CLI/dashboard concurrently), that
+    # exception propagated straight out of run_once(), crashing the whole batch and losing every
+    # already-computed result, with the failing submission recorded in neither the audit log nor
+    # the manual-review queue. With the audit backend fully down, even an otherwise-clean
+    # submission's own "resume_processed" audit write fails and it is correctly redirected to
+    # manual review too (nothing should be silently marked processed with no audit trail) -- the
+    # behavior under test is that run_once() itself never raises and every submission still lands
+    # somewhere (manual review), not that a fully-down audit backend is invisible to the pipeline.
+    queue = ManualReviewQueue()
+    good_submission = _submission(GOOD_RESUME, email="ok@example.com", name="Jane Doe")
+    gateway = IngestionGateway(
+        channel_adapters=[
+            _StaticChannelAdapter([_submission(CORRUPTED_PDF_BYTES), good_submission])
+        ],
+        extraction_service=ExtractionService(),
+        dedup_service=IdentityDedupService(),
+        manual_review_queue=queue,
+        audit_log=_AlwaysFailsAuditLog(),  # type: ignore[arg-type]
+    )
+
+    results = gateway.run_once()  # must not raise
+
+    assert results == []
+    reasons = {item.reason for item in queue.items()}
+    assert reasons == {QueueReason.UNPARSEABLE_FILE, QueueReason.PROCESSING_ERROR}
+    assert len(queue) == 2
+
+
 def test_a_bad_submission_does_not_stop_the_rest_of_the_batch_from_processing() -> None:
     good_submission = _submission(GOOD_RESUME, email="ok@example.com", name="Jane Doe")
     gateway = IngestionGateway(

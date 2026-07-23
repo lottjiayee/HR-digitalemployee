@@ -19,6 +19,16 @@ from hr_digital_employee.fairness_compliance.models import (
 )
 from hr_digital_employee.governance_audit.interfaces import AuditEvent, AuditLog
 
+_STATUS_ORDER: dict[AccessRequestStatus, int] = {
+    AccessRequestStatus.RECEIVED: 0,
+    AccessRequestStatus.IN_PROGRESS: 1,
+    AccessRequestStatus.FULFILLED: 2,
+}
+"""The lifecycle (module docstring: received -> in_progress -> fulfilled) only moves forward --
+without this, `advance()` had no state-machine validation at all, and a FULFILLED request could be
+silently regressed back to RECEIVED (or any other status), undermining the reliability of the
+compliance record for whether an FR-26 request was actually completed."""
+
 
 class AccessRequestService:
     def __init__(self, audit_log: AuditLog) -> None:
@@ -53,6 +63,12 @@ class AccessRequestService:
         self, request_id: str, new_status: AccessRequestStatus, actor: str, reason: str
     ) -> AccessRequest:
         existing = self._requests[request_id]
+        if _STATUS_ORDER[new_status] <= _STATUS_ORDER[existing.status]:
+            raise ValueError(
+                f"cannot advance request {request_id} from {existing.status.value!r} to "
+                f"{new_status.value!r} -- the lifecycle only moves forward (received -> "
+                "in_progress -> fulfilled)"
+            )
         updated = dataclasses.replace(existing, status=new_status)
         self._requests[request_id] = updated
         self._audit_log.record(

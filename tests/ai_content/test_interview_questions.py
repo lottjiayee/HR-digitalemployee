@@ -9,8 +9,11 @@ from hr_digital_employee.scoring_engine.engine import ScoringEngine
 from hr_digital_employee.scoring_engine.models import (
     JRP,
     Dimension,
+    DimensionResult,
     EducationLevel,
     MatchingCurve,
+    Score,
+    Tier,
     WeightedCriterion,
     WeightTemplate,
 )
@@ -181,6 +184,61 @@ def test_no_contradictory_questions_when_every_dimension_is_a_strength() -> None
 
     assert not any(q.angle is QuestionAngle.GAP for q in questions)
     assert sum(1 for q in questions if q.angle is QuestionAngle.VERIFICATION) == 4
+
+
+def _score_with_breakdown(breakdown: tuple[DimensionResult, ...]) -> Score:
+    return Score(
+        jrp_id="role-x",
+        jrp_version=1,
+        scoring_engine_version="stub-0.1.0",
+        parser_version="stub-0.1.0",
+        total_score=70.0,
+        tier=Tier.MID_MATCH,
+        passed_must_have=True,
+        failed_must_have_labels=(),
+        breakdown=breakdown,
+    )
+
+
+def test_a_single_mid_range_dimension_gets_only_one_fallback_question_not_both() -> None:
+    # Regression (round 6): with only one dimension in the breakdown, max()/min() both resolve to
+    # that same dimension -- the old fallback asked both a verification question ("you scored
+    # strongly") and a gap question ("shows a gap") about the identical dimension in the same
+    # output, exactly the self-contradiction the surrounding code comment says should be
+    # impossible.
+    score = _score_with_breakdown(
+        (DimensionResult(Dimension.MANDATORY_SKILLS, 0.7, 0.7, 100.0, 70.0),)
+    )
+    extracted = ExtractionService().extract("Skills:\nPython\n")
+
+    questions = generate_interview_questions(score, extracted)
+
+    verification_dims = {
+        q.text for q in questions if q.angle is QuestionAngle.VERIFICATION
+    }
+    gap_dims = {q.text for q in questions if q.angle is QuestionAngle.GAP}
+    assert not (verification_dims and gap_dims)  # never both angles about the sole dimension
+
+
+def test_two_dimensions_tied_at_the_same_mid_range_score_each_get_their_own_question() -> None:
+    # Regression (round 6): when every dimension ties at the identical mid-range score, max() and
+    # min() both resolve to the *first* tied element -- the second, equally mid-range dimension
+    # silently got no fallback question at all.
+    score = _score_with_breakdown(
+        (
+            DimensionResult(Dimension.MANDATORY_SKILLS, 0.7, 0.7, 50.0, 35.0),
+            DimensionResult(Dimension.EXPERIENCE_TENURE, 0.7, 0.7, 50.0, 35.0),
+        )
+    )
+    extracted = ExtractionService().extract("Skills:\nPython\n")
+
+    questions = generate_interview_questions(score, extracted)
+
+    assert any(q.angle is QuestionAngle.VERIFICATION for q in questions)
+    assert any(q.angle is QuestionAngle.GAP for q in questions)
+    verification_text = next(q.text for q in questions if q.angle is QuestionAngle.VERIFICATION)
+    gap_text = next(q.text for q in questions if q.angle is QuestionAngle.GAP)
+    assert verification_text != gap_text  # two distinct dimensions, not the same one twice
 
 
 def test_behavioral_question_references_a_real_project_when_available() -> None:

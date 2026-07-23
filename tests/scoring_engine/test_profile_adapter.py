@@ -133,6 +133,19 @@ def test_years_of_experience_ignores_a_reversed_date_range() -> None:
     assert profile.years_of_experience == 0.0
 
 
+def test_years_of_experience_recognizes_en_dash_and_em_dash_ranges() -> None:
+    # Regression (round 6): only the ASCII hyphen-minus was recognized as a range separator --
+    # word processors' AutoCorrect commonly turn a typed "-" between two numbers into an en dash,
+    # and PDF exporters/templates emit either dash form natively. Confirmed an identical
+    # employment range (same years, same everything else) scored 5.0 with an ASCII hyphen but 0.0
+    # with an en dash or em dash -- a direct consistency-guarantee violation.
+    en_dash_resume = _resume(experience=_verified("Acme Corp, 2015–2020, backend engineer"))
+    em_dash_resume = _resume(experience=_verified("Acme Corp, 2015—2020, backend engineer"))
+
+    assert build_candidate_profile(en_dash_resume).years_of_experience == 5.0
+    assert build_candidate_profile(em_dash_resume).years_of_experience == 5.0
+
+
 def test_years_of_experience_is_zero_when_experience_is_unverified() -> None:
     profile = build_candidate_profile(_resume())
 
@@ -167,6 +180,38 @@ def test_education_level_recognizes_doctorate() -> None:
 def test_education_level_recognizes_high_school() -> None:
     resume = _resume(education=_verified("High School Diploma"))
     assert build_candidate_profile(resume).education_level is EducationLevel.HIGH_SCHOOL
+
+
+def test_education_level_recognizes_chinese_bachelor() -> None:
+    # Regression: every degree keyword was English-only, so a Chinese-language resume stating an
+    # identical Bachelor's qualification as its English equivalent
+    # ("Bachelor of Computer Science" / "计算机科学学士") scored EducationLevel.NONE instead of
+    # BACHELOR -- a consistency-guarantee violation (SOP 2.1.1).
+    resume = _resume(education=_verified("计算机科学学士"))
+    assert build_candidate_profile(resume).education_level is EducationLevel.BACHELOR
+
+
+def test_education_level_recognizes_chinese_master() -> None:
+    resume = _resume(education=_verified("计算机科学硕士"))
+    assert build_candidate_profile(resume).education_level is EducationLevel.MASTER
+
+
+def test_education_level_recognizes_chinese_doctorate() -> None:
+    resume = _resume(education=_verified("计算机科学博士"))
+    assert build_candidate_profile(resume).education_level is EducationLevel.DOCTORATE
+
+
+def test_education_level_recognizes_chinese_high_school() -> None:
+    resume = _resume(education=_verified("高中毕业"))
+    assert build_candidate_profile(resume).education_level is EducationLevel.HIGH_SCHOOL
+
+
+def test_education_level_chinese_associate_is_not_misclassified_as_bachelor() -> None:
+    # Regression guard: Chinese "学士" (bachelor's degree) is a substring of "副学士" (associate
+    # degree) -- without the negative lookbehind, an associate degree would be misclassified as
+    # a (higher-ranked) bachelor's degree.
+    resume = _resume(education=_verified("计算机科学副学士"))
+    assert build_candidate_profile(resume).education_level is EducationLevel.ASSOCIATE
 
 
 def test_education_level_is_none_when_unverified() -> None:

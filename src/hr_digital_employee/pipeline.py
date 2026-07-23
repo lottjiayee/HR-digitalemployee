@@ -5,6 +5,7 @@ wiring exists in exactly one place rather than being duplicated across entry poi
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,11 +59,20 @@ def run_pipeline(
     return results, manual_review_queue
 
 
+_CONTROL_CHAR_PATTERN = re.compile("[\x00-\x1f\x7f]")
+"""Every ASCII C0 control character (including ESC, \\x1b -- the lead-in byte of every ANSI escape
+sequence) plus DEL. Newline/carriage-return alone were stripped before, but a candidate name is
+untrusted submission data (a message envelope's display name, once a real Email/Teams adapter is
+built), and a name crafted with a raw ANSI escape sequence (e.g. screen-clear + fake green "all
+candidates passed" text) survived unstripped -- terminal output spoofing distinct from, but the
+same class of risk as, the newline-forged-second-row case this function already guarded against."""
+
+
 def candidate_label(candidate: Candidate) -> str:
     """A human-readable identifier for display -- falls back through email/phone/candidate_id
-    when no name is on file. Newlines are stripped: this ultimately comes from untrusted
-    submission data (a message envelope's display name/email, once a real Email/Teams adapter is
-    built), and a label containing one could otherwise forge what looks like a second, standalone
-    entry in a printed report or table."""
+    when no name is on file. Every control character (newlines included) is replaced with a
+    space: this ultimately comes from untrusted submission data, and a label containing one could
+    otherwise forge what looks like a second, standalone entry in a printed report or table, or
+    inject raw terminal escape sequences into console output."""
     raw_label = candidate.name or candidate.email or candidate.phone or candidate.candidate_id
-    return raw_label.replace("\n", " ").replace("\r", " ")
+    return _CONTROL_CHAR_PATTERN.sub(" ", raw_label)

@@ -26,25 +26,45 @@ _STOPWORDS = frozenset(
 
 _WORD_PATTERN = re.compile(r"[a-z0-9]+")
 
+_MIN_SIGNIFICANT_LENGTH = 3
 
-def _significant_tokens(text: str) -> set[str]:
+
+def _tokens(text: str, *, min_length: int) -> set[str]:
     return {
         token
         for token in _WORD_PATTERN.findall(text.lower())
-        if len(token) >= 3 and token not in _STOPWORDS
+        if len(token) >= min_length and token not in _STOPWORDS
     }
+
+
+def _significant_tokens(text: str) -> set[str]:
+    return _tokens(text, min_length=_MIN_SIGNIFICANT_LENGTH)
 
 
 def anchor_for(sentence: str, passages: tuple[SourcePassage, ...]) -> str | None:
     """The field_name of the best-matching source passage, or None if no passage covers enough of
     `sentence` to count as anchored."""
-    sentence_tokens = _significant_tokens(sentence)
     best_field: str | None = None
     best_coverage = 0.0
     for passage in passages:
         passage_tokens = _significant_tokens(passage.text)
+        min_length = _MIN_SIGNIFICANT_LENGTH
+        if not passage_tokens:
+            # A passage whose entire real content is short tokens (e.g. skills "Go", "R", "C",
+            # "AI", "ML" -- all under the 3-character bar) has zero significant tokens and could
+            # never be matched at all: confirmed this silently dropped a candidate's entire skills
+            # sentence from the generated summary, even though it was verbatim, zero-hallucination-
+            # risk real content. Falling back to every non-stopword token (any length) lets such a
+            # passage still anchor -- only for passages this short, so ordinary passages keep the
+            # stricter bar (avoiding stray 1-2 letter words inflating coverage elsewhere).
+            passage_tokens = _tokens(passage.text, min_length=1)
+            min_length = 1
         if not passage_tokens:
             continue
+        # Tokenized at the same min_length as the passage: a short-token passage needs the
+        # sentence's own short tokens (e.g. "Go") in play too, or the intersection is empty no
+        # matter how verbatim the sentence actually is.
+        sentence_tokens = _tokens(sentence, min_length=min_length)
         coverage = len(passage_tokens & sentence_tokens) / len(passage_tokens)
         if coverage > best_coverage:
             best_coverage = coverage

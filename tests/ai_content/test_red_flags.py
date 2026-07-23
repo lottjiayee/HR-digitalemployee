@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+
 from hr_digital_employee.ai_content.models import RedFlagKind
 from hr_digital_employee.ai_content.red_flags import detect_red_flags
 from hr_digital_employee.intake_extraction.extraction import ExtractionService
@@ -121,6 +123,49 @@ def test_two_separate_overlapping_date_pairs_are_both_flagged_not_just_the_first
 
     inconsistency_flags = [f for f in flags if f.kind is RedFlagKind.INCONSISTENCY]
     assert len(inconsistency_flags) == 2
+
+
+def test_a_gap_immediately_before_an_ongoing_present_role_is_flagged() -> None:
+    # Regression (round 6): "Present"/"Current" (an ongoing role, extremely common on real
+    # resumes) previously matched nothing in the year-range pattern, which required two 4-digit
+    # years -- so a gap immediately preceding the candidate's *current* job was invisible to every
+    # detector, arguably the single most relevant gap to ask about.
+    resume_text = (
+        "Working Experience:\n2015-2017 Engineer at Alpha Corp\n"
+        "2019-Present Engineer at Beta Corp\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    gap_flag = next(f for f in flags if f.kind is RedFlagKind.EMPLOYMENT_GAP)
+    assert "2017" in gap_flag.description and "2019" in gap_flag.description
+
+
+def test_an_ongoing_present_role_overlapping_another_is_flagged_as_inconsistency() -> None:
+    resume_text = (
+        "Working Experience:\n2015-2018 Engineer at Alpha Corp\n"
+        "2017-Present Engineer at Beta Corp\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    assert any(f.kind is RedFlagKind.INCONSISTENCY for f in flags)
+
+
+def test_a_short_ongoing_present_role_counts_toward_frequent_job_changes() -> None:
+    current_year = datetime.date.today().year
+    resume_text = (
+        "Working Experience:\n"
+        "2018-2019 Engineer at A\n2019-2020 Engineer at B\n"
+        f"{current_year}-Present Engineer at C\n"
+    )
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    assert any(f.kind is RedFlagKind.FREQUENT_JOB_CHANGES for f in flags)
 
 
 def test_a_clean_consistent_resume_produces_no_flags() -> None:

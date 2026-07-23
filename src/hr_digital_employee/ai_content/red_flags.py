@@ -11,13 +11,21 @@ on, not a deliberately harsher tone for the `False` cases.
 
 from __future__ import annotations
 
+import datetime
 import re
 from collections import Counter
 
 from hr_digital_employee.ai_content.models import RedFlag, RedFlagKind
 from hr_digital_employee.intake_extraction.interfaces import ExtractedResume, FieldStatus
 
-_YEAR_RANGE_PATTERN = re.compile(r"\b((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2})\b")
+_YEAR_RANGE_PATTERN = re.compile(
+    r"\b((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2}|present|current)\b", re.IGNORECASE
+)
+# "Present"/"Current" (a currently-held role, extremely common on real resumes) previously matched
+# nothing here -- the pattern required two 4-digit years -- so an ongoing role was silently absent
+# from every downstream detector: not merged, not flagged for overlap, not counted toward frequent
+# job changes, and an unexplained gap immediately preceding it was invisible too. Resolved to
+# today's year, the same way a human reader would read an open-ended range.
 
 _MIN_GAP_YEARS = 1
 """A gap of at least this many years between consecutive roles is surfaced as a neutral
@@ -34,11 +42,14 @@ _KEYWORD_STUFFING_REPEAT_COUNT = 3
 def _year_ranges(text: str) -> list[tuple[int, int]]:
     # A reversed range (e.g. a typo'd "2020-2015") is dropped rather than sorted in as-is -- letting
     # it through would fabricate/inflate an apparent gap around it (see ASSUMPTIONS.md).
-    return sorted(
-        (int(start), int(end))
-        for start, end in _YEAR_RANGE_PATTERN.findall(text)
-        if int(end) >= int(start)
-    )
+    current_year = datetime.date.today().year
+    ranges = []
+    for start_text, end_text in _YEAR_RANGE_PATTERN.findall(text):
+        start = int(start_text)
+        end = current_year if end_text.lower() in ("present", "current") else int(end_text)
+        if end >= start:
+            ranges.append((start, end))
+    return sorted(ranges)
 
 
 def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:

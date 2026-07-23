@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 import uuid
 
 from hr_digital_employee.intake_extraction.models import (
@@ -39,8 +40,12 @@ def _normalize_email(email: str) -> str:
 
 def _normalize_phone(phone: str) -> str:
     """Digits only -- drops spaces/dashes/parens/dots and a leading `+`, so "+1 (555) 123-4567"
-    and "15551234567" compare equal instead of being treated as different people's numbers."""
-    return "".join(char for char in phone if char.isdigit())
+    and "15551234567" compare equal instead of being treated as different people's numbers. NFKC
+    normalization folds full-width Unicode digits ("１２３...", a realistic artifact of CJK-locale
+    input or OCR) to their ASCII equivalents first -- otherwise the same real phone number typed in
+    full-width form silently failed to match its ASCII counterpart, duplicating the candidate with
+    no human ever flagged (see ASSUMPTIONS.md)."""
+    return "".join(char for char in unicodedata.normalize("NFKC", phone) if char.isdigit())
 
 
 class IdentityDedupService:

@@ -7,6 +7,7 @@ own tests cover the Streamlit-free logic and always run.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,10 @@ import pytest
 pytest.importorskip("streamlit")
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
+
+from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog  # noqa: E402
+from hr_digital_employee.presentation.dashboard_data import build_dashboard_rows  # noqa: E402
+from hr_digital_employee.scoring_engine.jrp_config import load_jrp_from_yaml  # noqa: E402
 
 _APP_PATH = str(
     Path(__file__).resolve().parents[2] / "src" / "hr_digital_employee" / "presentation" / "app.py"
@@ -109,7 +114,9 @@ def test_a_blank_resumes_folder_shows_a_clean_error_not_a_silent_cwd_scan(
     at.run(timeout=_RUN_TIMEOUT)
 
     assert not at.exception
-    assert any("Resumes folder is required" in e.value for e in at.error)
+    assert any(
+        "enter a resumes folder path" in e.value for e in at.error
+    )
     assert at.session_state["dashboard_rows"] == []
 
 
@@ -156,3 +163,51 @@ def test_the_overall_score_metric_never_colors_low_match_as_a_positive_change(
     assert not at.exception
     assert "low_match" in at.session_state["dashboard_rows"][0].score.tier.value
     assert at.metric[0].proto.color == at.metric[0].proto.GRAY
+
+
+def test_selecting_the_second_of_two_identically_labeled_candidates_shows_its_own_score(
+    tmp_path: Path,
+) -> None:
+    # Regression (round 6): the drill-down used to select by label string --
+    # `next(row for row in rows if candidate_label(row.candidate) == selected_label)` -- which
+    # always resolved to the *first* row sharing that label. Two submissions that both merge into
+    # the same candidate identity (a real, if not yet reachable through today's shipped channel
+    # adapters, outcome of IdentityDedupService) are still independently scored, so a candidate
+    # named e.g. "Jane Doe" can legitimately appear as two distinct rows with two distinct scores.
+    # Selection must be by row index, not by the (potentially colliding) label text.
+    jrp_path = tmp_path / "backend-engineer.yaml"
+    jrp_path.write_text(_JRP_CONFIG, encoding="utf-8")
+    jrp = load_jrp_from_yaml(jrp_path)
+
+    weak_dir = tmp_path / "weak"
+    weak_dir.mkdir()
+    (weak_dir / "candidate.pdf").write_bytes(
+        b"Skills:\nCOBOL programming and mainframe systems\n\n"
+        b"Working Experience:\nOne year as a junior mainframe operator\n\n"
+        b"Education:\nHigh school diploma\n"
+    )
+    strong_dir = tmp_path / "strong"
+    strong_dir.mkdir()
+    (strong_dir / "candidate.pdf").write_bytes(_STRONG_RESUME)
+
+    weak_rows, _ = build_dashboard_rows(weak_dir, jrp, InMemoryAuditLog())
+    strong_rows, _ = build_dashboard_rows(strong_dir, jrp, InMemoryAuditLog())
+    weak_row, strong_row = weak_rows[0], strong_rows[0]
+    # Force both rows onto the identical candidate identity/label, exactly as two submissions
+    # that both merged via IdentityDedupService would -- while keeping each row's own distinct,
+    # independently-computed score, matching the real bug scenario.
+    strong_row_same_candidate = dataclasses.replace(strong_row, candidate=weak_row.candidate)
+    assert weak_row.score.total_score != strong_row_same_candidate.score.total_score
+
+    at = AppTest.from_file(_APP_PATH)
+    at.session_state["dashboard_rows"] = [weak_row, strong_row_same_candidate]
+    at.session_state["dashboard_manual_review_queue"] = None
+    at.run(timeout=_RUN_TIMEOUT)
+
+    # Select the *second* dropdown entry (index 1) -- the strong-scoring row.
+    at.selectbox(key="selected_candidate").set_value(1)
+    at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert f"{strong_row_same_candidate.score.total_score:.2f}" in at.metric[0].value
+    assert f"{weak_row.score.total_score:.2f}" not in at.metric[0].value

@@ -9,6 +9,7 @@ real dashboard/JRP-configuration UI (not built yet -- see ASSUMPTIONS.md). Run a
 from __future__ import annotations
 
 import argparse
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -65,6 +66,9 @@ def run(
     return results, manual_review_queue
 
 
+_CONTROL_CHAR_PATTERN = re.compile("[\x00-\x1f\x7f]")
+
+
 def _print_report(
     jrp: JRP, results: list[tuple[str, Score]], manual_review_queue: ManualReviewQueue
 ) -> None:
@@ -77,8 +81,12 @@ def _print_report(
         print("-" * 70)
         for raw_label, score in results:
             # Candidate-supplied (untrusted): a newline would otherwise forge what looks like a
-            # second, standalone row in the printed table.
-            label = raw_label.replace("\n", " ").replace("\r", " ")
+            # second, standalone row in the printed table, and a raw ANSI escape sequence (ESC,
+            # \x1b) could spoof console output (screen-clear, fake colored "success" text) --
+            # every control character is replaced, not just \n/\r. `candidate_label()` already
+            # does this too; re-applied here since `results` is a plain list of (str, Score) this
+            # function has no guarantee was built via `candidate_label()`.
+            label = _CONTROL_CHAR_PATTERN.sub(" ", raw_label)
             if score.passed_must_have:
                 must_have = "pass"
                 tier_display = score.tier.value

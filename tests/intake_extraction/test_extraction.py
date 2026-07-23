@@ -116,6 +116,28 @@ def test_a_skills_line_with_no_category_label_is_unaffected() -> None:
     assert resume.skills.value == ["Chinese (Fluent)", "English (Intermediate)"]
 
 
+def test_chinese_full_width_comma_separated_skills_are_split() -> None:
+    # Regression (round 6): the comma-split only recognized the ASCII "," -- standard Chinese
+    # typography uses the full-width "，" instead, so a Chinese comma-separated skills line
+    # reproduced the exact "scored 0% despite listing every skill" bug already fixed for English.
+    resume = ExtractionService().extract(
+        "技能\nC++，Python，Java，Linux\n\n经历\n软件工程师\n"
+    )
+
+    assert resume.skills.value == ["C++", "Python", "Java", "Linux"]
+
+
+def test_chinese_category_label_with_full_width_colon_does_not_stay_glued_to_first_skill() -> None:
+    # Regression (round 6): the category-label stripper only recognized the ASCII ":" -- a
+    # Chinese label using the full-width "：" (e.g. "编程语言：C++，Python，Java") left the whole
+    # line, label included, as one unsplit skill.
+    resume = ExtractionService().extract(
+        "技能\n编程语言：C++，Python，Java\n\n经历\n软件工程师\n"
+    )
+
+    assert resume.skills.value == ["C++", "Python", "Java"]
+
+
 def test_trailing_contact_info_with_no_closing_header_is_dropped_from_the_section() -> None:
     # Regression, found via a real downloaded resume: its contact block (name/email/phone/city)
     # sits at the very end of the document, after the last recognized header (Education), with no
@@ -164,6 +186,20 @@ def test_an_open_ended_tenure_range_is_not_dropped_as_phone_like() -> None:
     resume = ExtractionService().extract(resume_text)
 
     assert "2020 - Present" in (resume.experience.value or "")
+
+
+def test_a_bare_iso_date_line_is_not_dropped_as_phone_like() -> None:
+    # Regression (round 6): a job's bare ISO-format start date (e.g. "2023-01-15") has >=7 digits
+    # and consists only of digits/dashes -- exactly what the phone-like heuristic looks for -- so
+    # it was silently deleted, the same consistency-guarantee failure class as the year-range
+    # fix above, just not fully closed by it (a single date has no second year to match).
+    resume_text = (
+        "Working Experience:\nSenior Backend Engineer, Acme Corp\n2023-01-15\n"
+        "Led migration of the payments platform to a new architecture.\n\nEducation:\nBSc\n"
+    )
+    resume = ExtractionService().extract(resume_text)
+
+    assert "2023-01-15" in (resume.experience.value or "")
 
 
 def test_t1_12_chinese_section_headers_are_recognized_same_as_english() -> None:

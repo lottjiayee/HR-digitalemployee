@@ -12,6 +12,8 @@ from hr_digital_employee.scoring_engine.models import (
     MatchingCurve,
     MustHaveCriterion,
     MustHaveKind,
+    Score,
+    Tier,
     WeightedCriterion,
     WeightTemplate,
 )
@@ -86,3 +88,26 @@ def test_explanation_for_a_must_have_failure_names_the_reason_alongside_the_scor
     assert "Must know Python" in explanation.summary
     assert "80.0" in explanation.summary
     assert len(explanation.dimension_explanations) == 4
+
+
+def test_summary_displays_two_decimals_not_one() -> None:
+    # Regression (round 6): displaying total_score at 1 decimal reintroduced a bug already fixed
+    # in cli.py -- engine.py rounds to 2 places, so 79.95 (correctly mid_match) would print as
+    # "80.0" at 1 decimal, sitting right at the high_match boundary and reading like a
+    # tier-classification error even though the tier label itself is correct.
+    score = Score(
+        jrp_id="role-1",
+        jrp_version=1,
+        scoring_engine_version="stub-0.1.0",
+        parser_version="stub-0.1.0",
+        total_score=79.95,
+        tier=Tier.MID_MATCH,
+        passed_must_have=True,
+        failed_must_have_labels=(),
+        breakdown=(),
+    )
+
+    explanation = explain_score(score, _JRP)
+
+    assert "79.95" in explanation.summary
+    assert "80.0/100" not in explanation.summary

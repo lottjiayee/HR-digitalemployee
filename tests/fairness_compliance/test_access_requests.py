@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hr_digital_employee.fairness_compliance.access_requests import AccessRequestService
 from hr_digital_employee.fairness_compliance.models import AccessRequestKind, AccessRequestStatus
 from hr_digital_employee.governance_audit.audit_log import InMemoryAuditLog
@@ -37,6 +39,35 @@ def test_requests_for_filters_by_candidate() -> None:
     service.submit("cand-2", AccessRequestKind.ACCESS)
 
     assert len(service.requests_for("cand-1")) == 1
+
+
+def test_a_fulfilled_request_cannot_be_regressed_back_to_received() -> None:
+    # Regression (round 6): advance() had no state-machine validation at all -- a FULFILLED
+    # request could be silently regressed to any other status, undermining the reliability of the
+    # compliance record for whether an FR-26 request was actually completed.
+    service = AccessRequestService(InMemoryAuditLog())
+    request = service.submit("cand-1", AccessRequestKind.ACCESS)
+    service.advance(
+        request.request_id, AccessRequestStatus.FULFILLED, actor="hr_alice", reason="done"
+    )
+
+    with pytest.raises(ValueError, match="lifecycle only moves forward"):
+        service.advance(
+            request.request_id, AccessRequestStatus.RECEIVED, actor="hr_alice", reason="oops"
+        )
+
+
+def test_advancing_to_the_same_status_again_is_rejected() -> None:
+    service = AccessRequestService(InMemoryAuditLog())
+    request = service.submit("cand-1", AccessRequestKind.ACCESS)
+    service.advance(
+        request.request_id, AccessRequestStatus.IN_PROGRESS, actor="hr_alice", reason="reviewing"
+    )
+
+    with pytest.raises(ValueError, match="lifecycle only moves forward"):
+        service.advance(
+            request.request_id, AccessRequestStatus.IN_PROGRESS, actor="hr_alice", reason="again"
+        )
 
 
 def test_every_transition_is_audit_logged() -> None:

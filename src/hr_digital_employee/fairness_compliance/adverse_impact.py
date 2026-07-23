@@ -36,14 +36,26 @@ def four_fifths_test(groups: tuple[GroupOutcome, ...]) -> FourFifthsResult:
         # disparity to measure, not a maximal one. Forcing impact_ratio to 0.0 here would flag a
         # JRP with zero hires so far as if it had the worst possible adverse impact.
         impact_ratio = 1.0
+        violating_groups: tuple[str, ...] = ()
     else:
         impact_ratio = lowest.selection_rate / highest.selection_rate
+        # Every group below the threshold relative to the highest, not just the single lowest --
+        # with more than two groups, a middle group can independently violate four-fifths without
+        # being the extreme lowest one, and reporting only the lowest/highest pair let that
+        # violation go unreported to anyone who didn't separately re-derive it themselves.
+        violating_groups = tuple(
+            group.group_label
+            for group in groups
+            if group is not highest
+            and group.selection_rate / highest.selection_rate < FOUR_FIFTHS_THRESHOLD
+        )
 
     return FourFifthsResult(
         flagged=impact_ratio < FOUR_FIFTHS_THRESHOLD,
         lowest_rate_group=lowest.group_label,
         highest_rate_group=highest.group_label,
         impact_ratio=impact_ratio,
+        violating_groups=violating_groups,
     )
 
 

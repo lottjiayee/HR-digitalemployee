@@ -169,3 +169,27 @@ def test_candidate_label_strips_embedded_newlines() -> None:
     )
 
     assert "\n" not in candidate_label(candidate)
+
+
+def test_candidate_label_strips_ansi_escape_sequences() -> None:
+    # Regression (round 6): only "\n"/"\r" were stripped -- a name crafted with a raw ANSI escape
+    # sequence (screen-clear + fake green "success" text) survived unstripped, letting untrusted
+    # candidate-name data spoof console output up to and including a fabricated "all candidates
+    # passed" report.
+    candidate = Candidate(
+        candidate_id="id-1",
+        email=None,
+        phone=None,
+        name="\x1b[2J\x1b[H\x1b[32mFAKE: All candidates passed with 100.00\x1b[0m",
+    )
+
+    label = candidate_label(candidate)
+
+    assert "\x1b" not in label
+    assert "FAKE: All candidates passed with 100.00" in label
+
+
+def test_candidate_label_strips_null_bytes() -> None:
+    candidate = Candidate(candidate_id="id-1", email=None, phone=None, name="Evil\x00Name")
+
+    assert "\x00" not in candidate_label(candidate)

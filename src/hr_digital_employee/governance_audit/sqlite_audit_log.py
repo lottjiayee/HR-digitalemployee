@@ -30,6 +30,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_entity_ref ON audit_events(entity_re
 
 _SELECT_COLUMNS = "actor, entity_ref, action, reason, timestamp, version"
 
+_EXPECTED_COLUMNS = frozenset({"actor", "entity_ref", "action", "reason", "timestamp", "version"})
+
 
 class SqliteAuditLog:
     """Append-only audit log backed by a SQLite file (or `:memory:`, mainly for tests).
@@ -43,6 +45,24 @@ class SqliteAuditLog:
         self._connection.execute(_CREATE_TABLE)
         self._connection.execute(_CREATE_ENTITY_REF_INDEX)
         self._connection.commit()
+        self._check_schema_compatibility()
+
+    def _check_schema_compatibility(self) -> None:
+        # `CREATE TABLE IF NOT EXISTS` silently no-ops when `audit_events` already exists with a
+        # different/incompatible schema (e.g. a pre-existing file from an unrelated application,
+        # or a hand-edited table missing a column) -- without this eager check, the incompatibility
+        # wasn't discovered until the first real record() call, deep inside the processing
+        # pipeline. Gateway-level resilience (routing a single failing submission to manual review
+        # without losing the rest of the batch) deliberately tolerates a `record()` failure at that
+        # point on the assumption it's transient (e.g. a locked file from concurrent access) -- so
+        # a *permanent, structural* incompatibility needs to surface here, at construction, where
+        # a caller like cli.py's main() can still fail fast with a clean, actionable error.
+        columns = {row[1] for row in self._connection.execute("PRAGMA table_info(audit_events)")}
+        missing = _EXPECTED_COLUMNS - columns
+        if missing:
+            raise sqlite3.OperationalError(
+                f"audit_events table is missing expected column(s): {sorted(missing)}"
+            )
 
     def record(self, event: AuditEvent) -> None:
         self._connection.execute(

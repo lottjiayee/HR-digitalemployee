@@ -81,10 +81,17 @@ _YEAR_RANGE_LINE_PATTERN = re.compile(
     r"^\s*(?:19|20)\d{2}\s*-\s*(?:(?:19|20)\d{2}|present|current)\s*$", re.IGNORECASE
 )
 
+_ISO_DATE_LINE_PATTERN = re.compile(r"^\s*(?:19|20)\d{2}-\d{2}-\d{2}\s*$")
+"""A bare ISO-format date (e.g. a job's start date, "2023-01-15") has >=7 digits and consists only
+of digits/dashes -- exactly what _is_phone_like_line's heuristic looks for -- so without this
+exemption it was silently deleted as if it were a phone number, the same "consistency guarantee"
+failure class as the year-range exemption above, just not fully closed by it (a single date has no
+second year to make the existing YYYY-YYYY pattern match)."""
+
 
 def _is_phone_like_line(line: str) -> bool:
     stripped = line.strip().rstrip(".")
-    if _YEAR_RANGE_LINE_PATTERN.match(stripped):
+    if _YEAR_RANGE_LINE_PATTERN.match(stripped) or _ISO_DATE_LINE_PATTERN.match(stripped):
         return False
     digit_count = sum(char.isdigit() for char in stripped)
     if digit_count < 7:
@@ -124,6 +131,14 @@ def _split_sections(text: str) -> dict[str, str]:
     return sections
 
 
+_CATEGORY_LABEL_SEPARATOR = re.compile("[:：]")
+"""Matches the ASCII colon or its full-width Chinese equivalent "：" -- standard Chinese
+typography for a category label (e.g. "编程语言：C++，Python，Java") uses the full-width form, not
+the ASCII one. ASCII-only matching left every Chinese skills line's label glued to its first
+skill, the identical bug already fixed for the English case, just not ported to Chinese
+punctuation (see ASSUMPTIONS.md's bilingual-consistency requirement)."""
+
+
 def _strip_category_label(line: str) -> str:
     """Drops a leading category label from a skills line (e.g. "Programming Languages: C++,
     Python" -> " C++, Python") -- otherwise the label stays glued to the first split skill
@@ -131,8 +146,8 @@ def _strip_category_label(line: str) -> str:
     of any one skill. A resume skills line uses a colon this way almost exclusively for category
     labels, never as part of an actual skill name, so everything up to the first colon is dropped
     whenever one is present."""
-    _label, colon, rest = line.partition(":")
-    return rest if colon else line
+    match = _CATEGORY_LABEL_SEPARATOR.search(line)
+    return line[match.end() :] if match else line
 
 
 def _confidence_for(section_text: str, ocr_confidence: float | None) -> float:
@@ -189,13 +204,15 @@ class ExtractionService:
         # against a whole line. Projects deliberately do NOT get this treatment: a project bullet
         # routinely contains commas within its own prose (e.g. "Led a team of 5, delivering 2
         # weeks early"), and splitting on every comma there would fragment one project into
-        # several meaningless fragments.
+        # several meaningless fragments. The split also recognizes the full-width Chinese comma
+        # "，" (standard Chinese typography, e.g. "C++，Python，Java") -- ASCII-only splitting
+        # reproduced this exact 0%-score bug for Chinese resumes.
         if not section_text:
             return ExtractedField(value=None, confidence=0.0, status=FieldStatus.UNVERIFIED)
         items = [
             piece.strip("-• \t")
             for line in section_text.splitlines()
-            for piece in _strip_category_label(line).split(",")
+            for piece in re.split("[,，]", _strip_category_label(line))
             if piece.strip("-• \t")
         ]
         return ExtractedField(

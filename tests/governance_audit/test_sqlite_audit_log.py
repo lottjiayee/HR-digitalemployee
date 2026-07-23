@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from hr_digital_employee.governance_audit.models import AuditEvent
 from hr_digital_employee.governance_audit.sqlite_audit_log import SqliteAuditLog
@@ -89,3 +92,25 @@ def test_timestamp_round_trips_without_shifting_a_naive_datetime() -> None:
     log.record(naive_event)
 
     assert log.all_events()[0].timestamp == naive_event.timestamp
+
+
+def test_an_incompatible_existing_schema_fails_at_construction_not_on_first_record(
+    tmp_path: Path,
+) -> None:
+    # Regression (round 6): `CREATE TABLE IF NOT EXISTS` silently no-ops against a pre-existing
+    # `audit_events` table with a different schema -- the incompatibility used to go unnoticed
+    # until the first real record() call, deep inside the processing pipeline. Once gateway-level
+    # code started tolerating a record() failure as presumed-transient (to avoid one bad audit
+    # write crashing an entire batch), a *permanent* incompatibility needed to surface earlier, at
+    # construction, or it would go completely unreported.
+    db_path = tmp_path / "incompatible.db"
+    connection = sqlite3.connect(str(db_path))
+    connection.execute(
+        "CREATE TABLE audit_events (id INTEGER PRIMARY KEY, actor TEXT, entity_ref TEXT, "
+        "action TEXT, reason TEXT, timestamp TEXT)"  # missing the "version" column
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(sqlite3.OperationalError, match="version"):
+        SqliteAuditLog(db_path)

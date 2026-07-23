@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
 from hr_digital_employee.scoring_engine.skill_ontology import (
@@ -30,6 +32,22 @@ def test_identity_ontology_does_not_resolve_different_phrasings() -> None:
     ontology = IdentitySkillOntology()
 
     assert ontology.resolves_same_skill("led a team", "team leadership") is False
+
+
+def test_identity_ontology_resolves_nfc_and_nfd_forms_of_the_same_skill() -> None:
+    # Regression (round 6): a skill name typed in a JRP YAML (NFC -- precomposed accented
+    # characters, the form any ordinary text editor saves) and the same skill extracted from a
+    # resume in NFD (decomposed -- common output of certain PDF text extractors and macOS/HFS+
+    # -authored documents) render identically but are different code-point sequences. Confirmed a
+    # candidate who genuinely has the required accented skill failed the must-have gate and scored
+    # zero on it, purely from this invisible text-encoding difference.
+    nfc_form = "Développement Web"
+    nfd_form = unicodedata.normalize("NFD", nfc_form)
+    assert nfc_form != nfd_form  # sanity check: genuinely different code-point sequences
+
+    ontology = IdentitySkillOntology()
+
+    assert ontology.resolves_same_skill(nfc_form, nfd_form) is True
 
 
 def test_t2_14_synonym_map_ontology_resolves_different_phrasings_to_the_same_skill() -> None:

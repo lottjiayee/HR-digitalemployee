@@ -55,12 +55,19 @@ class GroupOutcome:
 @dataclass(frozen=True)
 class FourFifthsResult:
     """FR-20: flags if any group's selection rate is below 80% of the highest group's rate. A
-    trigger for human review, not a verdict -- see `SignificanceResult`."""
+    trigger for human review, not a verdict -- see `SignificanceResult`.
+
+    `violating_groups` names every group (other than the highest) whose own rate is below the
+    threshold, not just `lowest_rate_group` -- with more than two groups, an intermediate group
+    can independently violate the four-fifths threshold relative to the highest group without
+    being the single lowest one; reporting only the extreme pair let that group's own violation go
+    unnoticed by anyone reading just `lowest_rate_group`/`highest_rate_group` (round 6)."""
 
     flagged: bool
     lowest_rate_group: str
     highest_rate_group: str
     impact_ratio: float
+    violating_groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -244,6 +244,46 @@ def test_a_candidate_label_containing_a_newline_cannot_forge_an_extra_report_row
     assert any("FakeCo FORGED ROW" in line for line in lines)
 
 
+def test_a_candidate_label_containing_an_ansi_escape_sequence_is_stripped(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression (round 6): only "\n"/"\r" were stripped from a printed label -- a raw ANSI
+    # escape sequence (ESC, \x1b -- e.g. a screen-clear plus fake colored "success" text) survived
+    # unstripped, letting untrusted candidate-name data spoof console output.
+    jrp = JRP(
+        jrp_id="role-1",
+        role_name="Backend Engineer",
+        version=1,
+        weight_template=WeightTemplate.GENERAL,
+        weighted_criteria=(
+            WeightedCriterion(
+                dimension=Dimension.MANDATORY_SKILLS,
+                weight=100.0,
+                curve=MatchingCurve.LINEAR,
+                required_skills=("Python",),
+            ),
+        ),
+    )
+    score = Score(
+        jrp_id="role-1",
+        jrp_version=1,
+        scoring_engine_version="v1",
+        parser_version="v1",
+        total_score=90.0,
+        tier=Tier.HIGH_MATCH,
+        passed_must_have=True,
+        failed_must_have_labels=(),
+        breakdown=(),
+    )
+    spoofed_label = "\x1b[2J\x1b[H\x1b[32mFAKE: All candidates passed with 100.00\x1b[0m"
+
+    _print_report(jrp, [(spoofed_label, score)], ManualReviewQueue())
+
+    captured = capsys.readouterr()
+    assert "\x1b" not in captured.out
+    assert "FAKE: All candidates passed with 100.00" in captured.out
+
+
 def test_a_candidate_name_with_unencodable_characters_does_not_crash_the_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

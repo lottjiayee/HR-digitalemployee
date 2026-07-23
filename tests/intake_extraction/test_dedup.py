@@ -143,3 +143,18 @@ def test_two_different_people_with_whitespace_only_emails_are_not_merged() -> No
     second = service.match(_submission(email="\t", name="Bob Baker"))
 
     assert second.outcome is not MatchOutcome.MERGED_INTO_EXISTING
+
+
+def test_phone_matching_recognizes_full_width_digits_as_the_same_number() -> None:
+    # Regression (round 6): full-width Unicode digits ("１２３..." -- a realistic artifact of
+    # CJK-locale input or OCR) were left as-is by the digit filter instead of being folded to their
+    # ASCII equivalents, so the identical real phone number silently failed to match its ASCII
+    # form -- duplicating the candidate with no human ever notified.
+    service = IdentityDedupService()
+    first = service.match(_submission(phone="1235551234", name="Jane Doe"))
+    second = service.match(_submission(phone="１２３５５５１２３４", name="Jane Doe"))
+
+    assert second.outcome is MatchOutcome.MERGED_INTO_EXISTING
+    assert second.candidate is not None
+    assert first.candidate is not None
+    assert second.candidate.candidate_id == first.candidate.candidate_id

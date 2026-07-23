@@ -97,6 +97,15 @@ class MustHaveCriterion:
     minimum_years: float | None = None
 
     def __post_init__(self) -> None:
+        # A blank/missing label parsed fine here and was accepted as a "valid" JRP by
+        # config_builder.py's validate_jrp_dict -- a plausible JRP-editor fat-finger (one blank
+        # grid cell) that then crashed both cli.py and the dashboard the moment any candidate
+        # actually failed the criterion: `"; ".join(score.failed_must_have_labels)` raises
+        # TypeError on a None/non-string label. Caught here instead, at construction, the same
+        # "parses fine, crashes later in a different module" pattern already guarded for
+        # `minimum_years`/`version` elsewhere in this file.
+        if not isinstance(self.label, str) or not self.label.strip():
+            raise ValueError(f"label must be a non-empty string, got {self.label!r}")
         if self.kind is MustHaveKind.REQUIRED_SKILL and not self.required_skill:
             raise ValueError("REQUIRED_SKILL must-have criteria need required_skill set")
         if self.kind is MustHaveKind.MINIMUM_YEARS_EXPERIENCE:
@@ -111,6 +120,14 @@ class MustHaveCriterion:
                 self.minimum_years, (int, float)
             ):
                 raise TypeError(f"minimum_years must be a number, got {self.minimum_years!r}")
+            # `nan < 0` is False and `inf > 0` is True, so neither is caught by a negativity check
+            # alone -- a YAML typo like `minimum_years: .nan` sailed through silently, then made
+            # `years_of_experience >= minimum_years` False for every candidate forever (NaN
+            # comparisons are always false); `.inf` made it False for every *finite* candidate,
+            # forever -- both a permanent, invisible must-have gate with no config-load error ever
+            # flagging it.
+            if not math.isfinite(self.minimum_years):
+                raise ValueError(f"minimum_years must be finite, got {self.minimum_years}")
             if self.minimum_years < 0:
                 raise ValueError(f"minimum_years cannot be negative, got {self.minimum_years}")
 
@@ -135,15 +152,24 @@ class WeightedCriterion:
         if self.dimension is Dimension.MANDATORY_SKILLS and not self.required_skills:
             raise ValueError("MANDATORY_SKILLS criterion needs at least one required skill")
         if self.dimension is Dimension.EXPERIENCE_TENURE and not (
-            self.required_years is not None and self.required_years > 0
+            self.required_years is not None
+            and math.isfinite(self.required_years)
+            and self.required_years > 0
         ):
-            raise ValueError("EXPERIENCE_TENURE criterion needs a positive required_years")
+            # `inf > 0` is True, so a bare positivity check let `required_years: .inf` through --
+            # confirmed this makes curve_score permanently 0.0 for any finite candidate, with no
+            # config-load error despite `.inf` being a nonsensical requirement value.
+            raise ValueError("EXPERIENCE_TENURE criterion needs a finite, positive required_years")
         if self.dimension is Dimension.EDUCATIONAL_LEVEL and self.required_education_level is None:
             raise ValueError("EDUCATIONAL_LEVEL criterion needs a required_education_level")
         if self.dimension is Dimension.PROJECT_RELEVANCE and not (
-            self.required_project_count is not None and self.required_project_count > 0
+            self.required_project_count is not None
+            and math.isfinite(self.required_project_count)
+            and self.required_project_count > 0
         ):
-            raise ValueError("PROJECT_RELEVANCE criterion needs a positive required_project_count")
+            raise ValueError(
+                "PROJECT_RELEVANCE criterion needs a finite, positive required_project_count"
+            )
 
 
 @dataclass(frozen=True)
@@ -160,6 +186,14 @@ class JRP:
     tier_thresholds: TierThresholds = field(default_factory=TierThresholds)
 
     def __post_init__(self) -> None:
+        # A quoted YAML scalar (`version: "1"`) parses fine as a str -- nothing here or in
+        # jrp_config.py checked its type, so it wasn't caught until JRPRepository.save()'s
+        # monotonicity check (`jrp.version <= existing.version`) crashed with an uncaught
+        # `TypeError: '<=' not supported between instances of 'int' and 'str'` the moment a
+        # second, differently-typed version was saved -- the same "parses fine, crashes later in a
+        # different module" pattern already fixed here for `minimum_years`/`tier_thresholds`.
+        if isinstance(self.version, bool) or not isinstance(self.version, int):
+            raise ValueError(f"version must be an int, got {self.version!r}")
         total_weight = sum(criterion.weight for criterion in self.weighted_criteria)
         if not math.isclose(total_weight, 100.0, abs_tol=0.01):
             raise ValueError(

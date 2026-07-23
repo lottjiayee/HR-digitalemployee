@@ -98,6 +98,38 @@ def test_all_groups_at_zero_selection_rate_is_not_flagged() -> None:
     assert result.impact_ratio == 1.0
 
 
+def test_an_intermediate_group_violation_is_not_masked_by_only_reporting_the_extreme_pair() -> (
+    None
+):
+    # Regression (round 6): with more than two groups, only the single lowest-rate group was
+    # named -- a middle group that itself violates the four-fifths threshold relative to the
+    # highest (but isn't the extreme lowest) went unreported. Group C here independently has an
+    # impact ratio of 0.79 (fails), distinct from Group B (the extreme lowest, ratio 0.4).
+    groups = (
+        GroupOutcome(group_label="White", selected_count=50, total_count=100),  # 50% (highest)
+        GroupOutcome(group_label="Black", selected_count=20, total_count=100),  # 20%, ratio 0.4
+        GroupOutcome(group_label="Hispanic", selected_count=39, total_count=100),  # 39%, ratio .78
+    )
+
+    result = four_fifths_test(groups)
+
+    assert result.lowest_rate_group == "Black"
+    assert "Black" in result.violating_groups
+    assert "Hispanic" in result.violating_groups
+    assert "White" not in result.violating_groups
+
+
+def test_no_violating_groups_when_every_group_clears_the_threshold() -> None:
+    groups = (
+        GroupOutcome(group_label="A", selected_count=90, total_count=100),
+        GroupOutcome(group_label="B", selected_count=100, total_count=100),
+    )
+
+    result = four_fifths_test(groups)
+
+    assert result.violating_groups == ()
+
+
 def test_adverse_impact_testing_service_audit_logs_a_flagged_result() -> None:
     audit_log = InMemoryAuditLog()
     service = AdverseImpactTestingService(audit_log)
@@ -153,7 +185,13 @@ def test_t4_4_fourfifths_result_carries_no_individual_level_data() -> None:
     result = four_fifths_test(groups)
 
     result_fields = {f.name for f in dataclasses.fields(result)}
-    assert result_fields == {"flagged", "lowest_rate_group", "highest_rate_group", "impact_ratio"}
+    assert result_fields == {
+        "flagged",
+        "lowest_rate_group",
+        "highest_rate_group",
+        "impact_ratio",
+        "violating_groups",
+    }
     assert "candidate_id" not in result_fields
 
 

@@ -1188,3 +1188,206 @@ above):
   same data. This undercuts SOP 1.6's traceability principle for what is likely to become HR's
   primary interactive tool. A real fix needs a persistence/wiring decision (a shared `--audit-db`-
   style option, or a session-level `SqliteAuditLog`), not just a variable move.
+
+## Security + logic review, round 7 (2026-07-23): four parallel module reviews, 18 more real bugs found and fixed
+
+Four parallel adversarial reviews split by module (`intake_extraction`; `scoring_engine`;
+`ai_content` + `fairness_compliance`; `governance_audit` + `presentation` + `cli` + `jrp_editor`),
+each agent explicitly instructed to reproduce every finding by executing the real code -- not
+inferring from reading it -- before reporting. This round surfaced more real bugs than any prior
+round. A Unicode/internationalization cluster (zero-width characters, full-width CJK punctuation,
+NFC/NFD normalization, en/em dashes, full-width digits) accounts for the single largest group,
+none of which five prior review rounds' fixtures happened to exercise -- text that renders
+identically to a human but differs at the code-point level is a systematic blind spot for
+substring/regex-based logic, distinct from (and not caught by) the format-consistency bugs already
+found via real-file testing.
+
+**intake_extraction:**
+
+1. **(Security, High) Injection screening was trivially defeated by zero-width/combining Unicode
+   characters.** A zero-width space (U+200B) spliced into "ignore" (`"ign​ore all previous
+   instructions"`), or a combining diacritic stacked onto a letter, rendered identically to the
+   plain word but broke every instruction-like regex, since none tolerate an extra code point
+   mid-match -- confirmed end to end via the real `IngestionGateway`: the payload sailed through
+   completely unflagged, landing verbatim in `extracted.experience.value`. **Fixed:**
+   `injection_screening.py` now strips zero-width characters (U+200B/200C/200D/2060/FEFF) and
+   combining marks (Unicode category Mn) before instruction-pattern matching only -- never applied
+   to `cleaned_text` itself. Homoglyph substitution (e.g. Cyrillic "о" for Latin "o") is not
+   defended against; that needs a confusables table, out of scope for this heuristic stub.
+2. **(Security, High) Hidden white-on-white text detection recognized only hex colors, and even
+   then asymmetrically.** `rgb(255,255,255)` and the named CSS color `white` weren't recognized at
+   all; even the recognized hex form required a trailing `;` on the *opening* color declaration but
+   not the closing one, so `style="color:#ffffff"` as the last rule before the closing quote (no
+   semicolon) bypassed detection entirely. **Fixed:** the pattern now recognizes all three forms,
+   with the semicolon optional on both occurrences.
+3. **(Correctness, Medium-High) The `system:` instruction-like pattern false-positived on ordinary
+   resume content.** Any literal "system" followed by a colon matched -- "Version Control System:
+   Git, SVN" or "Ticketing System: Jira" routed a completely legitimate resume to manual review as
+   suspected prompt injection, confirmed via the real gateway. **Fixed:** anchored to the start of a
+   line (`^\s*system\s*:\s*`, multiline) -- a chat-role-style injection realistically opens its own
+   line, whereas "System" appearing mid-line after other descriptor words never has it as the
+   line's first word.
+4. **(Correctness, High) Chinese full-width punctuation wasn't recognized in skills splitting.**
+   The category-label stripper and comma-splitter both only recognized ASCII `:`/`,` -- standard
+   Chinese typography uses the full-width `：`/`，` instead (e.g. "编程语言：C++，Python，Java"),
+   reproducing the exact "scored 0% despite listing every skill" bug already fixed for the English/
+   ASCII case, just never ported to Chinese punctuation. **Fixed:** both now also recognize the
+   full-width forms.
+5. **(Correctness, Medium) A bare ISO-format date line (e.g. "2023-01-15") was misclassified as a
+   phone number and silently deleted.** The existing `YYYY - YYYY`/`YYYY - Present` exemption
+   didn't cover a single bare date, which has >=7 digits and consists only of digits/dashes --
+   exactly what the phone-like heuristic looks for. **Fixed:** added a matching ISO-date exemption
+   pattern alongside the existing year-range one.
+6. **(Correctness, Medium-High) Phone-number dedup matching didn't fold full-width Unicode digits
+   to ASCII.** The same real phone number typed in full-width form (a realistic artifact of
+   CJK-locale input or OCR) silently failed to match its ASCII counterpart, duplicating the
+   candidate with no human ever notified -- confirmed via `IdentityDedupService`. **Fixed:**
+   `_normalize_phone()` now applies NFKC normalization (which folds full-width digits to ASCII)
+   before filtering to digits.
+
+**scoring_engine:**
+
+7. **(Correctness, High) NaN/Infinity bypassed every numeric-requirement validation.** `nan < 0` is
+   `False` and `inf > 0` is `True`, so a YAML typo like `minimum_years: .nan` (or `.inf`) sailed
+   through `MustHaveCriterion`'s negativity-only check, silently creating a must-have gate no
+   candidate could ever pass (NaN/Inf comparisons are always false, or true for every finite value)
+   -- with the full weighted score still computed alongside it, no error anywhere. The identical
+   gap applied to `WeightedCriterion.required_years`/`required_project_count`. **Fixed:** both now
+   require `math.isfinite(...)` in addition to the existing sign check.
+8. **(Correctness, High) En dash/em dash date ranges were invisible to years-of-experience
+   parsing.** Word's AutoCorrect commonly turns a typed hyphen between two numbers into an en dash;
+   PDF exporters/templates emit either dash form natively. An identical employment range (same
+   years, same everything else) scored 5.0 with an ASCII hyphen but 0.0 with an en dash or em dash
+   -- confirmed directly, a straight consistency-guarantee violation. **Fixed:**
+   `profile_adapter.py`'s `_YEAR_RANGE_PATTERN` now accepts `-`/`–`/`—` as the separator. Word-form
+   ranges ("2015 to 2020") remain a separate, still-open gap.
+9. **(Correctness, High) Skill-ontology matching had no Unicode normalization.** A skill typed in a
+   JRP YAML in NFC (precomposed, the form any ordinary editor saves) vs. the same skill extracted
+   from a resume in NFD (decomposed -- common output of certain PDF extractors and macOS/HFS+
+   -authored documents) render identically but are different code-point sequences -- confirmed a
+   candidate who genuinely had a required accented skill ("Développement Web") failed the must-have
+   gate and scored zero on it. **Fixed:** `_normalize()` now applies NFC normalization before the
+   existing case/whitespace folding.
+10. **(Correctness, Medium-High) `JRP.version` had no type validation.** A quoted YAML scalar
+    (`version: "1"`) parsed fine as a `str`; saving a second, differently-typed version later
+    crashed `JRPRepository.save()`'s monotonicity check with an uncaught `TypeError` comparing
+    `int` to `str` -- parses fine, crashes later in a different module, the same pattern already
+    guarded for `minimum_years`/`tier_thresholds`. **Fixed:** `JRP.__post_init__` now requires
+    `version` to be a (non-bool) `int`.
+11. **(Correctness/Availability, High) `MustHaveCriterion.label` had no validation at all.** A
+    blank JRP-editor grid cell round-trips to `None` via pandas, not an empty string -- accepted as
+    a "valid" JRP by `config_builder.py`'s `validate_jrp_dict`, then crashed both `cli.py` and the
+    dashboard the moment any candidate actually failed the criterion (`"; ".join(...)` on a `None`).
+    Reproduced end to end through both the CLI report and a full `AppTest`-driven dashboard run.
+    **Fixed:** `MustHaveCriterion.__post_init__` now requires `label` to be a non-empty (after
+    `.strip()`) string.
+
+**ai_content / fairness_compliance:**
+
+12. **(Correctness, High) "Present"/"Current" ongoing roles were invisible to every red-flag
+    detector.** `red_flags.py`'s own `_YEAR_RANGE_PATTERN` copy required two 4-digit years, so a
+    currently-held role written as "2019-Present" (extremely common) never matched -- a gap,
+    overlap, or short-tenure pattern involving the candidate's *current* job was invisible to
+    inconsistency/gap/frequent-job-change detection alike, arguably the single most relevant gap to
+    ask about. **Fixed:** the pattern now also matches "present"/"current" as the end of a range,
+    resolved to today's year the same way a human reader would.
+13. **(Correctness, Medium) Interview-question generation could ask a self-contradicting
+    verification+gap pair about the identical dimension.** With a single mid-range dimension (or
+    every dimension tied at the same mid-range score), `max()`/`min()` both resolve to the *first*
+    tied/only element, so the fallback asked both "you scored strongly" and "shows a gap" about the
+    same dimension -- the exact contradiction the surrounding code comment already says should be
+    impossible, reached a different way. A second tied dimension was also silently dropped from
+    consideration entirely. **Fixed:** rank by score once (not separate `max()`/`min()` calls) so
+    two tied dimensions each get their own distinct entry; when only one dimension survives to fall
+    back on, pick whichever angle it sits closer to instead of asking both.
+14. **(Correctness, Medium) `explainability.py` displayed `total_score` at 1 decimal, reintroducing
+    a bug already fixed in `cli.py`.** A value like 79.95 (correctly `mid_match`) printed as "80.0"
+    -- sitting right at the `high_match` boundary, looking like a tier-classification error.
+    **Fixed:** 2 decimals, matching `engine.py`'s rounding precision and `cli.py`'s own prior fix.
+15. **(Correctness, Medium) Sentence anchoring dropped a candidate's entire skills sentence when
+    every skill tokenized to a short word.** Skills like "Go", "R", "C", "AI", "ML" are all under
+    the 3-character significance bar, so a passage made entirely of such tokens had zero
+    "significant" tokens and could never be matched -- confirmed a 100% verbatim,
+    zero-hallucination-risk summary sentence was silently dropped as if fabricated. **Fixed:** when
+    a passage's significant-token set is empty, fall back to every non-stopword token (any length)
+    for that passage, tokenizing the candidate sentence at the same relaxed bar so the intersection
+    can actually work; ordinary (non-short-token) passages keep the stricter bar unchanged.
+16. **(Correctness, Low-Medium) `four_fifths_test` only ever named the single most-extreme
+    lowest-rate group.** With more than two groups, an intermediate group could independently
+    violate the four-fifths threshold relative to the highest group without being the extreme
+    lowest one -- its own violation went unreported to anyone reading just `lowest_rate_group`/
+    `highest_rate_group`, contradicting the type's own docstring ("flags if *any* group's rate is
+    below 80%"). **Fixed:** `FourFifthsResult` gained a `violating_groups` field naming every group
+    (other than the highest) that independently fails the threshold.
+17. **(Correctness, Low) `AccessRequestService.advance()` had no state-machine validation.** A
+    `FULFILLED` request could be silently regressed to `RECEIVED` (or any other status) with no
+    error, undermining the reliability of the compliance record for whether an FR-26 request was
+    actually completed. **Fixed:** transitions must now strictly increase along `received ->
+    in_progress -> fulfilled`; advancing to the same or an earlier status raises `ValueError`.
+
+**governance_audit / presentation / cli:**
+
+18. **(Correctness/Reliability, High) An audit-log write failure crashed the entire pipeline batch
+    and dropped the failing item from both the audit log and the manual-review queue.**
+    `_route_to_manual_review()` called `audit_log.record()` with no exception boundary of its own;
+    if the audit backend failed for any reason (confirmed with a real, deliberately locked SQLite
+    file simulating a second concurrent CLI/dashboard process), that exception propagated straight
+    out of `run_once()`, losing every already-computed result in the batch and the failing
+    submission's own manual-review entry. **Fixed:** the audit write inside
+    `_route_to_manual_review()` is now best-effort (wrapped in `try/except Exception: pass`) -- it
+    must never block the manual-review enqueue that follows it. See #19 below for why a
+    *permanent* audit-backend failure still needs to surface loudly elsewhere.
+19. **(Reliability, High, found while fixing #18) That fix alone would have silently masked a
+    genuinely broken/incompatible `--audit-db` schema.** `SqliteAuditLog`'s `CREATE TABLE IF NOT
+    EXISTS` silently no-ops against a pre-existing, incompatible table; the only reason this was
+    ever reported to the CLI user was that the resulting `sqlite3.OperationalError` propagated,
+    uncaught, all the way from a `record()` call deep in the pipeline up to `main()`'s
+    `except sqlite3.Error` handler -- exactly the propagation path #18 needed to interrupt. Making
+    #18's fix and this pre-existing, deliberately-tested behavior (`test_main_reports_a_clean_error
+    _when_audit_db_has_an_incompatible_schema`) both correct at once needed `SqliteAuditLog` itself
+    to detect the incompatibility eagerly, rather than relying on where a later failure happened to
+    surface. **Fixed:** `SqliteAuditLog.__init__` now checks `PRAGMA table_info(audit_events)`
+    against the expected column set immediately after opening, raising `sqlite3.OperationalError`
+    at construction if any are missing -- before any per-item, presumed-transient failure handling
+    in the gateway ever gets a chance to mask it.
+20. **(Correctness, Medium) The dashboard's candidate drill-down could show the wrong candidate's
+    score/summary when two rows shared the same label.** Selection resolved
+    `next(row for row in rows if candidate_label(row.candidate) == selected_label)` -- always the
+    *first* row matching that label string, regardless of which dropdown entry was actually picked.
+    Two submissions that both merge into the same candidate identity (a real, if not yet reachable
+    through today's shipped channel adapters, `IdentityDedupService` outcome) are still
+    independently scored, so one candidate can legitimately appear as two distinct rows. **Fixed:**
+    the `st.selectbox` now selects by row *index* (`format_func` displays the label), never by the
+    label string itself.
+21. **(Security, Medium) Candidate labels only stripped `\n`/`\r`, not other control characters or
+    raw ANSI escape sequences.** A candidate name crafted with a raw escape sequence (screen-clear
+    plus fake green "success" text) survived unstripped into both `pipeline.py`'s `candidate_label
+    ()` and `cli.py`'s `_print_report()` -- untrusted submission data spoofing console output, up
+    to and including a fabricated "all candidates passed" report. A null byte likewise survived.
+    **Fixed:** both now replace every ASCII C0 control character (`\x00`-`\x1f`) plus DEL (`\x7f`),
+    not just newlines.
+
+336 tests (296 -> 336: 40 new regression tests, one per fix above plus a couple of extras for edge
+cases within a fix); ruff/mypy clean.
+
+**Findings documented rather than code-patched this round** (real, verified, but judgment calls
+about scope, same category as the JRP-editor-audit-trail/dashboard-audit-log gaps above):
+- Homoglyph substitution (e.g. Cyrillic "о"/"г" for Latin "o"/"g") still defeats
+  `injection_screening.py`'s instruction-pattern matching (finding #1's zero-width/combining-mark
+  fix doesn't cover this) -- closing it needs a Unicode confusables table, a meaningfully larger
+  addition than this heuristic stub's current scope.
+- Word-form date ranges ("2015 to 2020") remain invisible to both `profile_adapter.py`'s and
+  `red_flags.py`'s year-range parsing (finding #8 only closed the dash-typography gap, not the
+  separator-word gap).
+
+**One more found while gathering real verification data for the SOP blueprint's Appendix B
+(2026-07-23):** running an identical candidate through the pipeline once in English and once in
+Chinese (to demonstrate the consistency guarantee for the blueprint document) surfaced a real,
+previously-undetected bug -- `_DEGREE_KEYWORDS` in `profile_adapter.py` was entirely English-only,
+so "计算机科学学士" (Bachelor of Computer Science) scored `EducationLevel.NONE` instead of
+`BACHELOR`, dropping the Educational Level dimension's score for an otherwise identical candidate
+(100.0 vs 85.0 for the same qualifications) -- exactly the class of consistency-guarantee
+violation this round's other Unicode/i18n fixes address, just in a file none of the four review
+agents happened to check for Chinese keyword coverage. **Fixed:** added Chinese equivalents (博士/
+硕士/学士/副学士/高中/中学) alongside each English pattern, with a negative lookbehind so "学士"
+(bachelor) doesn't match inside "副学士" (associate). 336 -> 341 tests; ruff/mypy clean.

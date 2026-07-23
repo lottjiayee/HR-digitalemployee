@@ -83,6 +83,20 @@ def test_filled_in_default_rows_validate_successfully() -> None:
     assert len(jrp.weighted_criteria) == 4
 
 
+def test_a_must_have_row_with_a_blank_label_does_not_validate() -> None:
+    # Regression (round 6): a blank "label" grid cell in the must-have editor round-trips to None
+    # via pandas, not an empty string -- nothing validated it, so this was accepted as a "valid"
+    # JRP and only crashed later, in cli.py/the dashboard, the moment a candidate actually failed
+    # the criterion (`"; ".join(score.failed_must_have_labels)` on a None). A single blank cell
+    # while filling in the rest of the row is a plausible, ordinary JRP-editor fat-finger.
+    rows = _fill_in_requirements(default_weighted_criteria(WeightTemplate.GENERAL))
+    raw = _base_raw(rows)
+    raw["must_have"] = [{"kind": "required_skill", "label": None, "required_skill": "Python"}]
+
+    with pytest.raises(JRPConfigError, match="label"):
+        validate_jrp_dict(raw)
+
+
 def test_jrp_to_editable_dict_round_trips_through_validate_jrp_dict() -> None:
     rows = _fill_in_requirements(default_weighted_criteria(WeightTemplate.SENIOR_TECHNICAL))
     original = validate_jrp_dict(_base_raw(rows))

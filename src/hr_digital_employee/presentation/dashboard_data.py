@@ -14,6 +14,12 @@ from hr_digital_employee.ai_content.content_service import (
     GeneratedContent,
 )
 from hr_digital_employee.governance_audit.interfaces import AuditLog
+from hr_digital_employee.intake_extraction.channel_adapters import (
+    UploadedFilesChannelAdapter,
+)
+from hr_digital_employee.intake_extraction.dedup import IdentityDedupService
+from hr_digital_employee.intake_extraction.extraction import ExtractionService
+from hr_digital_employee.intake_extraction.gateway import IngestionGateway
 from hr_digital_employee.intake_extraction.interfaces import ExtractedResume
 from hr_digital_employee.intake_extraction.manual_review_queue import ManualReviewQueue
 from hr_digital_employee.intake_extraction.models import Candidate
@@ -36,6 +42,50 @@ def build_dashboard_rows(
     resulting candidate -- one row per candidate, sorted by score descending (inherited from
     `run_pipeline`)."""
     pipeline_results, manual_review_queue = run_pipeline(resumes_folder, jrp, audit_log)
+    content_service = ContentGenerationService()
+    rows = [
+        DashboardRow(
+            candidate=result.candidate,
+            extracted=result.extracted,
+            score=result.score,
+            content=content_service.generate(
+                result.candidate.candidate_id, result.extracted, result.score
+            ),
+        )
+        for result in pipeline_results
+    ]
+    return rows, manual_review_queue
+
+
+def build_dashboard_rows_from_uploads(
+    uploads: list[tuple[str, bytes]], jrp: JRP, audit_log: AuditLog
+) -> tuple[list[DashboardRow], ManualReviewQueue]:
+    """Same as `build_dashboard_rows` but accepts in-memory (filename, bytes) pairs instead of a
+    folder path -- used by the Streamlit dashboard's file-upload widget so files never need to be
+    written to disk."""
+    manual_review_queue = ManualReviewQueue()
+    adapter = UploadedFilesChannelAdapter(uploads)
+    gateway = IngestionGateway(
+        channel_adapters=[adapter],
+        extraction_service=ExtractionService(),
+        dedup_service=IdentityDedupService(),
+        manual_review_queue=manual_review_queue,
+        audit_log=audit_log,
+    )
+    pipeline_results = []
+    from hr_digital_employee.scoring_engine.engine import ScoringEngine
+    from hr_digital_employee.scoring_engine.profile_adapter import build_candidate_profile
+
+    for candidate, extracted in gateway.run_once():
+        profile = build_candidate_profile(extracted)
+        score = ScoringEngine().score(profile, jrp, extracted.parser_version)
+        from hr_digital_employee.pipeline import CandidateResult
+
+        pipeline_results.append(
+            CandidateResult(candidate=candidate, extracted=extracted, score=score)
+        )
+    pipeline_results.sort(key=lambda r: r.score.total_score, reverse=True)
+
     content_service = ContentGenerationService()
     rows = [
         DashboardRow(

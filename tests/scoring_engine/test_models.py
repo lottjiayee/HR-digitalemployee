@@ -97,6 +97,22 @@ def test_must_have_minimum_years_criterion_needs_minimum_years_set() -> None:
         MustHaveCriterion(kind=MustHaveKind.MINIMUM_YEARS_EXPERIENCE, label="Must have 2+ years")
 
 
+def test_must_have_criterion_rejects_a_none_label() -> None:
+    # Regression (round 6): a blank JRP-editor grid cell round-trips to None via pandas, not an
+    # empty string -- nothing validated `label` at all, so it was accepted as "valid" and later
+    # crashed both cli.py and the dashboard (`"; ".join(...)` on a None) the moment any candidate
+    # actually failed the criterion.
+    with pytest.raises(ValueError, match="label"):
+        MustHaveCriterion(
+            kind=MustHaveKind.REQUIRED_SKILL, label=None, required_skill="Python"  # type: ignore[arg-type]
+        )
+
+
+def test_must_have_criterion_rejects_a_blank_or_whitespace_only_label() -> None:
+    with pytest.raises(ValueError, match="label"):
+        MustHaveCriterion(kind=MustHaveKind.REQUIRED_SKILL, label="   ", required_skill="Python")
+
+
 @pytest.mark.parametrize(
     ("total_score", "expected_tier"),
     [
@@ -140,6 +156,62 @@ def test_candidate_profile_rejects_nan_years_of_experience() -> None:
         CandidateProfile(
             skills=(), years_of_experience=float("nan"), education_level=EducationLevel.NONE,
             project_count=0,
+        )
+
+
+def test_must_have_minimum_years_rejects_nan() -> None:
+    # Regression (round 6): `nan < 0` is False, so a YAML typo like `minimum_years: .nan` sailed
+    # past the old negativity-only check, then silently created a must-have gate no candidate
+    # could ever pass (NaN comparisons are always false) -- with no config-load error.
+    with pytest.raises(ValueError, match="finite"):
+        MustHaveCriterion(
+            kind=MustHaveKind.MINIMUM_YEARS_EXPERIENCE, label="x", minimum_years=float("nan")
+        )
+
+
+def test_must_have_minimum_years_rejects_infinity() -> None:
+    # Regression (round 6): `inf > 0` is True, so a positivity-only check let `minimum_years: .inf`
+    # through -- likewise a permanent, invisible, unwinnable must-have gate.
+    with pytest.raises(ValueError, match="finite"):
+        MustHaveCriterion(
+            kind=MustHaveKind.MINIMUM_YEARS_EXPERIENCE, label="x", minimum_years=float("inf")
+        )
+
+
+def test_weighted_criterion_experience_tenure_rejects_infinite_required_years() -> None:
+    # Regression (round 6): `inf > 0` is True, so `required_years: .inf` passed the old
+    # positivity-only check -- confirmed this makes curve_score permanently 0.0 for any finite
+    # candidate, with no config-load error despite the value being nonsensical.
+    with pytest.raises(ValueError, match="finite"):
+        WeightedCriterion(
+            dimension=Dimension.EXPERIENCE_TENURE,
+            weight=30.0,
+            curve=MatchingCurve.LINEAR,
+            required_years=float("inf"),
+        )
+
+
+def test_weighted_criterion_project_relevance_rejects_infinite_required_project_count() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        WeightedCriterion(
+            dimension=Dimension.PROJECT_RELEVANCE,
+            weight=20.0,
+            curve=MatchingCurve.LINEAR,
+            required_project_count=float("inf"),
+        )
+
+
+def test_jrp_rejects_a_non_int_version() -> None:
+    # Regression (round 6): a quoted YAML scalar (`version: "1"`) parsed fine as a str -- nothing
+    # validated its type, so it wasn't caught until JRPRepository.save()'s monotonicity check
+    # crashed later with an uncaught TypeError comparing int to str.
+    with pytest.raises(ValueError, match="version"):
+        JRP(
+            jrp_id="role-1",
+            role_name="Senior Engineer",
+            version="1",  # type: ignore[arg-type]
+            weight_template=WeightTemplate.GENERAL,
+            weighted_criteria=(_criterion(Dimension.MANDATORY_SKILLS, 100.0),),
         )
 
 
