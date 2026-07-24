@@ -8,6 +8,7 @@ own tests cover the Streamlit-free logic and always run.
 from __future__ import annotations
 
 import dataclasses
+import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -300,6 +301,62 @@ def test_an_invalid_uploaded_jrp_shows_a_clean_error_not_a_crash() -> None:
         at.run(timeout=_RUN_TIMEOUT)
         at.button[0].click()
         at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert any("Error loading JRP config" in e.value for e in at.error)
+    assert at.session_state["dashboard_rows"] == []
+
+
+def test_uploading_an_invalid_jrp_does_not_leak_a_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: tmp_jrp_path.unlink(missing_ok=True) ran right after load_jrp_from_yaml(), not
+    # in a finally -- any JRPConfigError (bad YAML, missing keys) skipped the cleanup entirely,
+    # leaking one temp file per rejected upload. A very plausible workflow (fix one validation
+    # error, re-upload, repeat) leaks one file per attempt, indefinitely, holding the (possibly
+    # draft/sensitive) JRP content unencrypted in temp space after the session ends. Redirects
+    # tempfile's default directory to this test's own tmp_path so the check is isolated from the
+    # real shared system temp directory.
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    resumes = [_FakeUploadedFile("candidate.pdf", _STRONG_RESUME)]
+    jrp_file = _FakeUploadedFile("broken.yaml", b"not: [valid, jrp, config")
+
+    with _patched_file_uploader(resumes, jrp_file):
+        at = AppTest.from_file(_APP_PATH)
+        at.run(timeout=_RUN_TIMEOUT)
+        at.button[0].click()
+        at.run(timeout=_RUN_TIMEOUT)
+
+    assert not at.exception
+    assert list(tmp_path.glob("*.yaml")) == []
+
+
+def test_a_failed_second_run_clears_the_previous_runs_stale_candidate_table(
+    tmp_path: Path,
+) -> None:
+    # Regression: dashboard_rows/dashboard_manual_review_queue were never cleared when a new
+    # Run's own input validation failed -- HR finishing a review for Role A, then mistyping the
+    # JRP path while switching to Role B, would still see Role A's full candidate table sitting on
+    # screen underneath the new error banner, with nothing indicating it was stale. Uses the
+    # folder-path fallback for both runs since that's simplest to drive here; the fix itself lives
+    # at the top of the shared button handler, so it applies to upload mode identically.
+    resumes_dir = tmp_path / "resumes"
+    resumes_dir.mkdir()
+    (resumes_dir / "candidate.pdf").write_bytes(_STRONG_RESUME)
+    jrp_path = tmp_path / "backend-engineer.yaml"
+    jrp_path.write_text(_JRP_CONFIG, encoding="utf-8")
+
+    at = AppTest.from_file(_APP_PATH)
+    at.run(timeout=_RUN_TIMEOUT)
+    at.text_input(key="resumes_path").set_value(str(resumes_dir))
+    at.text_input(key="jrp_path").set_value(str(jrp_path))
+    at.button[0].click()
+    at.run(timeout=_RUN_TIMEOUT)
+    assert len(at.session_state["dashboard_rows"]) == 1  # confirm the premise: run 1 succeeded
+
+    at.text_input(key="jrp_path").set_value(str(tmp_path / "does-not-exist.yaml"))
+    at.button[0].click()
+    at.run(timeout=_RUN_TIMEOUT)
 
     assert not at.exception
     assert any("Error loading JRP config" in e.value for e in at.error)

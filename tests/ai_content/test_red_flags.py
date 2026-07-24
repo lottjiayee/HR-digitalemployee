@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import unicodedata
 
 from hr_digital_employee.ai_content.models import RedFlagKind
 from hr_digital_employee.ai_content.red_flags import detect_red_flags
@@ -59,6 +60,25 @@ def test_repeated_skill_entries_are_flagged_as_keyword_stuffing() -> None:
     stuffing = next(f for f in flags if f.kind is RedFlagKind.KEYWORD_STUFFING)
     assert stuffing.neutral_framing is False
     assert "python" in stuffing.description.lower()
+
+
+def test_the_same_skill_in_different_unicode_forms_still_counts_toward_keyword_stuffing() -> None:
+    # Regression: the same skill listed in NFC (precomposed accents) vs. NFD (decomposed --
+    # common macOS/HFS+-authored-document output) render identically but were compared as two
+    # distinct entries, splitting a single repeated skill's count 2+1 across forms and silently
+    # undercounting it below the stuffing threshold -- the same class of bug already fixed for
+    # skill-ontology matching and degree-keyword matching elsewhere in this codebase.
+    nfc = unicodedata.normalize("NFC", "Développement Web")
+    nfd = unicodedata.normalize("NFD", "Développement Web")
+    assert nfc != nfd  # sanity check: genuinely different code-point sequences
+    resume_text = f"Skills:\n{nfc}\n{nfd}\n{nfc}\nPython\n"
+    extracted = ExtractionService().extract(resume_text)
+
+    flags = detect_red_flags(extracted)
+
+    stuffing = next(f for f in flags if f.kind is RedFlagKind.KEYWORD_STUFFING)
+    assert "développement web" in stuffing.description.lower()
+    assert "3 times" in stuffing.description
 
 
 def test_no_false_gap_flag_for_a_continuously_employed_candidate_with_overlapping_roles() -> None:

@@ -42,6 +42,22 @@ def _gap_question(label: str) -> InterviewQuestion:
     )
 
 
+def _relative_strength_question(label: str) -> InterviewQuestion:
+    return InterviewQuestion(
+        angle=QuestionAngle.VERIFICATION,
+        text=f"Compared to this role's other requirements, {label} is where your profile is "
+        "relatively strongest -- can you walk through a specific example that demonstrates this?",
+    )
+
+
+def _relative_weakness_question(label: str) -> InterviewQuestion:
+    return InterviewQuestion(
+        angle=QuestionAngle.GAP,
+        text=f"Compared to this role's other requirements, {label} is where your profile is "
+        "relatively weakest -- how would you approach strengthening that area?",
+    )
+
+
 def generate_interview_questions(
     score: Score, extracted: ExtractedResume
 ) -> tuple[InterviewQuestion, ...]:
@@ -92,10 +108,19 @@ def generate_interview_questions(
                 ask_gap = False
             else:
                 ask_verification = False
+        # This fallback only ever fires for a dimension that did NOT already clear
+        # HIGH_SCORE_THRESHOLD/LOW_SCORE_THRESHOLD in the loop above (verification_asked/
+        # gap_asked would otherwise already be True) -- so `strongest`/`weakest` here always sit
+        # in the broad 0.5-0.85 mid-range, never a genuine strength or shortfall. Reusing
+        # _verification_question/_gap_question's "you scored strongly"/"below this role's target"
+        # wording here was directly misleading: confirmed a candidate scoring 55%/52% (tier =
+        # LOW_MATCH) got told they "scored strongly" on one dimension purely because it was this
+        # candidate's least-bad dimension, not because 55% is actually strong by any real
+        # standard. Distinct, explicitly *relative* wording avoids overclaiming.
         if ask_verification:
-            questions.append(_verification_question(_DIMENSION_LABELS[strongest.dimension]))
+            questions.append(_relative_strength_question(_DIMENSION_LABELS[strongest.dimension]))
         if ask_gap:
-            questions.append(_gap_question(_DIMENSION_LABELS[weakest.dimension]))
+            questions.append(_relative_weakness_question(_DIMENSION_LABELS[weakest.dimension]))
 
     questions.append(
         InterviewQuestion(angle=QuestionAngle.BEHAVIORAL, text=_behavioral_question(extracted))

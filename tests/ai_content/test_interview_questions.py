@@ -241,6 +241,32 @@ def test_two_dimensions_tied_at_the_same_mid_range_score_each_get_their_own_ques
     assert verification_text != gap_text  # two distinct dimensions, not the same one twice
 
 
+def test_a_mid_range_fallback_question_does_not_overclaim_strength_or_a_gap() -> None:
+    # Regression: the fallback for an all-mid-range candidate reused _verification_question/
+    # _gap_question's "you scored strongly"/"below this role's target" wording -- confirmed a
+    # candidate scoring 55%/52% (a LOW_MATCH-tier candidate) was told they "scored strongly" on
+    # one dimension purely because it was this candidate's least-bad dimension, and that the other
+    # was "below target" purely because it was the worst -- misleading interview prep for a
+    # dimension that never actually crossed HIGH_SCORE_THRESHOLD/LOW_SCORE_THRESHOLD at all. The
+    # fallback must use explicitly relative wording instead.
+    score = _score_with_breakdown(
+        (
+            DimensionResult(Dimension.MANDATORY_SKILLS, 0.55, 0.55, 50.0, 27.5),
+            DimensionResult(Dimension.EXPERIENCE_TENURE, 0.52, 0.52, 50.0, 26.0),
+        )
+    )
+    extracted = ExtractionService().extract("Skills:\nPython\n")
+
+    questions = generate_interview_questions(score, extracted)
+
+    verification_text = next(q.text for q in questions if q.angle is QuestionAngle.VERIFICATION)
+    gap_text = next(q.text for q in questions if q.angle is QuestionAngle.GAP)
+    assert "scored strongly" not in verification_text
+    assert "relatively strongest" in verification_text
+    assert "below this role's target" not in gap_text
+    assert "relatively weakest" in gap_text
+
+
 def test_behavioral_question_references_a_real_project_when_available() -> None:
     resume_text = "Skills:\nPython\n\nProjects:\nBuilt an internal analytics dashboard\n"
     extracted = ExtractionService().extract(resume_text)

@@ -47,22 +47,34 @@ class AccessRequestService:
             detail=detail,
         )
         self._requests[request.request_id] = request
-        self._audit_log.record(
-            AuditEvent(
-                actor=candidate_id,
-                entity_ref=candidate_id,
-                action=f"{kind.value}_request_received",
-                reason=detail or f"candidate submitted a {kind.value} request",
-                timestamp=datetime.now(UTC),
-                version="1",
+        # Best-effort, like the gateway's manual-review-routing audit write (ASSUMPTIONS.md round
+        # 7): a transient audit backend outage (e.g. a locked shared --audit-db file) must not
+        # cost a candidate their legally-mandated FR-26 request. Before this, an audit failure here
+        # left the request already stored in `self._requests` but propagated an exception out of
+        # submit() anyway -- the caller had no way to know the request actually went through, no
+        # request_id to check its status later, and would plausibly resubmit into a duplicate.
+        try:
+            self._audit_log.record(
+                AuditEvent(
+                    actor=candidate_id,
+                    entity_ref=candidate_id,
+                    action=f"{kind.value}_request_received",
+                    reason=detail or f"candidate submitted a {kind.value} request",
+                    timestamp=datetime.now(UTC),
+                    version="1",
+                )
             )
-        )
+        except Exception:  # see comment above: must not block the request itself
+            pass
         return request
 
     def advance(
         self, request_id: str, new_status: AccessRequestStatus, actor: str, reason: str
     ) -> AccessRequest:
-        existing = self._requests[request_id]
+        try:
+            existing = self._requests[request_id]
+        except KeyError:
+            raise ValueError(f"no access request found with id {request_id!r}") from None
         if _STATUS_ORDER[new_status] <= _STATUS_ORDER[existing.status]:
             raise ValueError(
                 f"cannot advance request {request_id} from {existing.status.value!r} to "
@@ -71,16 +83,19 @@ class AccessRequestService:
             )
         updated = dataclasses.replace(existing, status=new_status)
         self._requests[request_id] = updated
-        self._audit_log.record(
-            AuditEvent(
-                actor=actor,
-                entity_ref=existing.candidate_id,
-                action=f"{existing.kind.value}_request_{new_status.value}",
-                reason=reason,
-                timestamp=datetime.now(UTC),
-                version="1",
+        try:
+            self._audit_log.record(
+                AuditEvent(
+                    actor=actor,
+                    entity_ref=existing.candidate_id,
+                    action=f"{existing.kind.value}_request_{new_status.value}",
+                    reason=reason,
+                    timestamp=datetime.now(UTC),
+                    version="1",
+                )
             )
-        )
+        except Exception:  # best-effort, same reasoning as submit() above
+            pass
         return updated
 
     def requests_for(self, candidate_id: str) -> list[AccessRequest]:

@@ -88,17 +88,26 @@ class AdverseImpactTestingService:
         self, jrp_id: str, groups: tuple[GroupOutcome, ...], actor: str, reason: str
     ) -> FourFifthsResult:
         result = four_fifths_test(groups)
-        self._audit_log.record(
-            AuditEvent(
-                actor=actor,
-                entity_ref=jrp_id,
-                action="fairness_flag_raised" if result.flagged else "fairness_test_passed",
-                reason=(
-                    f"{reason}; impact ratio {result.impact_ratio:.2f} between "
-                    f"{result.lowest_rate_group!r} and {result.highest_rate_group!r}"
-                ),
-                timestamp=datetime.now(UTC),
-                version="1",
+        # Best-effort, like the gateway's manual-review-routing audit write (ASSUMPTIONS.md round
+        # 7): a transient audit backend outage must not throw away an already-computed fairness
+        # result -- a scheduled/on-change re-test FR-20 mandates is exactly the kind of automated,
+        # unattended call where an uncaught exception here would otherwise silently skip the
+        # test's real purpose (surfacing a possible adverse-impact flag) instead of just missing
+        # one audit line about it.
+        try:
+            self._audit_log.record(
+                AuditEvent(
+                    actor=actor,
+                    entity_ref=jrp_id,
+                    action="fairness_flag_raised" if result.flagged else "fairness_test_passed",
+                    reason=(
+                        f"{reason}; impact ratio {result.impact_ratio:.2f} between "
+                        f"{result.lowest_rate_group!r} and {result.highest_rate_group!r}"
+                    ),
+                    timestamp=datetime.now(UTC),
+                    version="1",
+                )
             )
-        )
+        except Exception:  # see comment above: must not block the result being returned
+            pass
         return result

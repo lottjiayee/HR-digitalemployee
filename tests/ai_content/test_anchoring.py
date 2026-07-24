@@ -60,6 +60,31 @@ def test_a_two_letter_skill_passage_like_ai_ml_can_still_be_anchored() -> None:
     assert field == "skills"
 
 
+def test_a_tie_with_an_earlier_smaller_passage_anchors_to_the_richer_true_source() -> None:
+    # Regression: build_source_passages() always orders passages skills/projects/experience/
+    # education. An experience sentence naturally repeats the same skill names it mentions, so it
+    # can cover 100% of the (smaller, earlier-checked) skills passage's tokens too -- a strict `>`
+    # comparison let that earlier tie stand forever, mislabeling the experience sentence's source
+    # as "skills". A human doing the monthly hallucination audit would check the wrong passage
+    # (skills) and never verify the sentence's real claims (employer name, tenure) against the
+    # actual experience passage they came from.
+    passages = (
+        SourcePassage(field_name="skills", text="Python, AWS, Docker"),
+        SourcePassage(
+            field_name="experience",
+            text="Used Python, AWS and Docker daily while leading backend services at Acme Corp.",
+        ),
+    )
+    sentence = (
+        "Work experience: Used Python, AWS and Docker daily while leading backend "
+        "services at Acme Corp.."
+    )
+
+    field = anchor_for(sentence, passages)
+
+    assert field == "experience"
+
+
 def test_short_token_passage_fallback_does_not_anchor_an_unrelated_sentence() -> None:
     # The relaxed fallback for short-token passages must still require real overlap -- it isn't a
     # blanket "anchor everything" escape hatch.

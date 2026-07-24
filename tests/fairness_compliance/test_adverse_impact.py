@@ -40,7 +40,7 @@ def test_a_rate_at_exactly_80_percent_is_not_flagged() -> None:
 
 def test_four_fifths_test_requires_at_least_two_groups() -> None:
     with pytest.raises(ValueError, match="at least two groups"):
-        four_fifths_test((GroupOutcome(group_label="Solo", selected_count=1, total_count=1),))
+        four_fifths_test((GroupOutcome(group_label="Solo", selected_count=1, total_count=10),))
 
 
 def test_t4_2_a_flag_from_a_small_sample_is_not_corroborated_by_significance() -> None:
@@ -80,7 +80,18 @@ def test_group_outcome_rejects_zero_total() -> None:
 
 def test_group_outcome_rejects_selected_greater_than_total() -> None:
     with pytest.raises(ValueError, match="selected_count"):
-        GroupOutcome(group_label="Bad", selected_count=5, total_count=3)
+        GroupOutcome(group_label="Bad", selected_count=7, total_count=5)
+
+
+def test_group_outcome_rejects_a_group_smaller_than_the_reporting_floor() -> None:
+    # Regression: a group of size 1 has a selection rate of exactly 0% or 100%, fully revealing
+    # that one candidate's own outcome tied to their self-declared protected characteristic --
+    # directly contradicting GroupOutcome's own "never reconstructs an individual's protected
+    # attributes" promise (FR-21). Confirmed reachable end-to-end via
+    # AdverseImpactTestingService.run_four_fifths_test, which would otherwise permanently write
+    # that single candidate's outcome into the governance audit log.
+    with pytest.raises(ValueError, match="at least 5"):
+        GroupOutcome(group_label="Tiny", selected_count=1, total_count=1)
 
 
 def test_all_groups_at_zero_selection_rate_is_not_flagged() -> None:
@@ -209,3 +220,32 @@ def test_adverse_impact_testing_service_audit_logs_a_passing_result_too() -> Non
 
     assert result.flagged is False
     assert audit_log.events_for("jrp-1")[0].action == "fairness_test_passed"
+
+
+def test_run_four_fifths_test_still_returns_a_result_when_the_audit_backend_is_down() -> None:
+    # Regression: audit_log.record() had no exception boundary -- a transient audit backend
+    # outage (e.g. a locked shared --audit-db file, same root cause as ASSUMPTIONS.md round 7's
+    # gateway finding) meant an already-computed fairness result was thrown away entirely instead
+    # of being returned, which matters most for exactly the automated/unattended re-test FR-20
+    # mandates (quarterly, or on every JRP weight/must-have change).
+    class _AlwaysFailsAuditLog:
+        def record(self, event: object) -> None:
+            raise RuntimeError("simulated audit backend failure")
+
+        def events_for(self, entity_ref: str) -> list[object]:
+            return []
+
+        def all_events(self) -> list[object]:
+            return []
+
+    service = AdverseImpactTestingService(_AlwaysFailsAuditLog())  # type: ignore[arg-type]
+    groups = (
+        GroupOutcome(group_label="Group A", selected_count=70, total_count=100),
+        GroupOutcome(group_label="Group B", selected_count=100, total_count=100),
+    )
+
+    result = service.run_four_fifths_test(  # must not raise
+        "jrp-1", groups, actor="fairness_job", reason="test"
+    )
+
+    assert result.flagged is True

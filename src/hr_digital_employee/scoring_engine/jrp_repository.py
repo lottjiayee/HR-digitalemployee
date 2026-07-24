@@ -29,19 +29,16 @@ class JRPRepository:
                 f"{existing.version} is already stored -- JRP versions must strictly increase"
             )
 
-        # Audit-logged before the store is actually written: if record() raises, save() must
-        # leave nothing changed -- a caller catching the exception reasonably assumes the save
-        # never happened, which used to be false (the store write happened first).
-        self._audit_log.record(
-            AuditEvent(
-                actor=actor,
-                entity_ref=jrp.jrp_id,
-                action="jrp_saved",
-                reason=reason,
-                timestamp=datetime.now(UTC),
-                version=str(jrp.version),
-            )
-        )
+        # Every audit write happens before the store is actually written: if any record() call
+        # raises, save() must leave nothing changed -- a caller catching the exception reasonably
+        # assumes the save never happened. The guideline-warning events are written before the
+        # "jrp_saved" event itself, not after: "jrp_saved" is the record that vouches for the save
+        # having genuinely completed, so it must be the last audit write, immediately before the
+        # store mutation it describes. Writing it any earlier -- as this code once did -- meant a
+        # failure in a *later* audit write (e.g. the warning loop) still left a permanent
+        # "jrp_saved" event in the audit trail even though save() went on to raise and the store
+        # was never actually updated: an auditor would see "JRP saved by hr_alice" for a save that
+        # never took effect.
         for warning in weight_guideline_warnings(jrp):
             self._audit_log.record(
                 AuditEvent(
@@ -53,6 +50,16 @@ class JRPRepository:
                     version=str(jrp.version),
                 )
             )
+        self._audit_log.record(
+            AuditEvent(
+                actor=actor,
+                entity_ref=jrp.jrp_id,
+                action="jrp_saved",
+                reason=reason,
+                timestamp=datetime.now(UTC),
+                version=str(jrp.version),
+            )
+        )
         self._jrps[jrp.jrp_id] = jrp
 
     def get(self, jrp_id: str) -> JRP | None:

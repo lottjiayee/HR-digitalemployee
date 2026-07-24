@@ -153,6 +153,38 @@ def test_main_returns_nonzero_and_prints_an_error_for_an_invalid_jrp_config(
     assert "Error loading JRP config" in captured.err
 
 
+def test_main_reports_a_clean_error_for_a_nonexistent_resumes_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Regression: --resumes was never validated as an existing directory -- LocalFolderChannel
+    # Adapter treats a missing folder the same as an empty one, so a typo'd path silently produced
+    # a clean-looking but completely empty report ("Scored: 0   Routed to manual review: 0")
+    # instead of any error, indistinguishable from "this folder genuinely has no resumes yet".
+    jrp_path = _write_jrp(tmp_path)
+
+    exit_code = main(
+        ["--resumes", str(tmp_path / "does-not-exist"), "--jrp", str(jrp_path)]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "--resumes path not found or not a directory" in captured.err
+
+
+def test_main_reports_a_clean_error_when_resumes_points_at_a_file_not_a_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Same gap, a different real-world trigger: accidentally passing the JRP path (or any other
+    # file) to --resumes instead of a folder.
+    jrp_path = _write_jrp(tmp_path)
+
+    exit_code = main(["--resumes", str(jrp_path), "--jrp", str(jrp_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "--resumes path not found or not a directory" in captured.err
+
+
 def test_main_reports_a_clean_error_when_audit_db_path_is_not_a_sqlite_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

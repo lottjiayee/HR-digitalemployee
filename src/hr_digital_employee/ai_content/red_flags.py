@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import unicodedata
 from collections import Counter
 
 from hr_digital_employee.ai_content.models import RedFlag, RedFlagKind
@@ -128,7 +129,15 @@ def _detect_employment_gaps(text: str) -> tuple[RedFlag, ...]:
 def _detect_keyword_stuffing(extracted: ExtractedResume) -> RedFlag | None:
     if extracted.skills.status is not FieldStatus.VERIFIED or not extracted.skills.value:
         return None
-    normalized = [skill.strip().lower() for skill in extracted.skills.value]
+    # NFKC + casefold (not just .strip().lower()), matching skill_ontology.py's normalization: the
+    # same accented/combining-mark skill name pasted from two different sources (e.g. one NFC, one
+    # NFD -- common macOS/HFS+-authored-document output) or written in full-width CJK-input-method
+    # characters otherwise renders identically but compares as two distinct entries, splitting a
+    # single repeated skill's count across forms and silently undercounting toward the stuffing
+    # threshold below.
+    normalized = [
+        unicodedata.normalize("NFKC", skill.strip()).casefold() for skill in extracted.skills.value
+    ]
     repeated_skill, repeat_count = Counter(normalized).most_common(1)[0]
     if repeat_count >= _KEYWORD_STUFFING_REPEAT_COUNT:
         return RedFlag(

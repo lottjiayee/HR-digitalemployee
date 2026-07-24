@@ -123,6 +123,17 @@ class IngestionGateway:
 
         candidate = match.candidate
         assert candidate is not None  # NEW_PROFILE / MERGED_INTO_EXISTING always set this
+        # Deliberately NOT wrapped in try/except (unlike _route_to_manual_review's audit write
+        # below) -- confirmed via test_an_audit_log_failure_during_manual_review_routing_does_
+        # not_crash_the_batch that this is an intentional, already-considered choice, not an
+        # oversight: if the audit backend is down, an otherwise-clean candidate's own
+        # "resume_processed" event failing to record propagates out, is caught by run_once()'s
+        # exception boundary, and correctly redirects this candidate to manual review too, rather
+        # than letting it through to the final ranked results with no audit trail at all ("nothing
+        # should be silently marked processed with no audit trail" -- see that test's docstring and
+        # design.md's "everything auditable" principle). Making this best-effort like the manual-
+        # review path would violate that invariant for exactly the outcome (a candidate reaching a
+        # human-facing ranked report) where an audit trail matters most.
         self._audit_log.record(
             AuditEvent(
                 actor="ingestion_gateway",

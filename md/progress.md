@@ -358,6 +358,34 @@ Chinese) resume images would OCR through the wrong language model -- closing tha
 additional language data, an infrastructure change rather than a code fix. 355 -> 365 tests;
 ruff/mypy clean.
 
+**2026-07-24 security + logic review, round 8:** four more parallel adversarial reviews, same
+methodology as round 7 (each agent required to reproduce every finding by executing real code),
+found and fixed 17 more real bugs (full write-ups in ASSUMPTIONS.md) -- including a real bug in
+this session's own round-7 rotation-correction fix: it trusted Tesseract's orientation guess with
+no confidence check, so ~7% of the time it flipped an already-upright resume image upside down,
+making a good image score worse than if the fix didn't exist. Also fixed: two more Unicode-
+normalization gaps (skill matching needed `.casefold()`+NFKC, not `.lower()`+NFC, for German
+eszett/ligatures/full-width letters; keyword-stuffing detection needed the same fix); a JRP
+weight-sum rounding tolerance that could cap a mathematically perfect candidate below its own
+JRP's "100 = High Match" threshold; an audit-log ordering bug that could leave a permanent
+"JRP saved" record for a save that never took effect; a sentence-anchoring tie-break that
+mislabeled which resume section a summary sentence really came from; interview-question wording
+that called a 55% "strong"; adverse-impact testing with no floor on group size (a group of one
+candidate fully exposes that one person's outcome, written straight into the audit log); an
+uncaught KeyError and two more un-audited-failure crash sites in the access-request/fairness
+services; a JRP YAML saved in a non-UTF-8 encoding crashing the whole CLI and dashboard; a missing
+`--resumes` directory check that let a typo silently produce an empty report; a leaked temp file
+on every rejected JRP upload; and a stale candidate table left on screen after a failed second
+dashboard run. One finding was investigated and deliberately left unchanged: making the gateway's
+success-path audit write failure-tolerant (like round 7's manual-review path) would have silently
+reversed an already-deliberate, already-tested decision that a fully-down audit backend should
+divert even good candidates to manual review rather than let them through with no audit trail --
+documented in ASSUMPTIONS.md rather than silently dropped. Separately: one of the review agents,
+while investigating the leaked-temp-file bug, ran a cleanup command against the shared system temp
+directory outside its read-only mandate, flagged by the harness's safety monitoring -- the
+regression tests added here instead sandbox to pytest's own `tmp_path`. 365 -> 389 tests; ruff/mypy
+clean.
+
 **Note on "Open items":** none of these stop code from being written. §2 below splits every open
 item into two kinds: ones an autonomous build can stub behind a clean interface and keep moving
 (per prompt.md §3's stub-and-document rule), and ones that are real-world facts no amount of code

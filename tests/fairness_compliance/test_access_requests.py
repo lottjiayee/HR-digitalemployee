@@ -70,6 +70,58 @@ def test_advancing_to_the_same_status_again_is_rejected() -> None:
         )
 
 
+def test_advancing_an_unknown_request_id_raises_a_clean_error_not_a_raw_keyerror() -> None:
+    # Regression: `self._requests[request_id]` with no bounds check raised an uncaught KeyError --
+    # this service's own in-memory store is wiped on every process restart (module docstring), so
+    # any caller looking up a request by a stale/typo'd id after a restart crashed ungracefully
+    # instead of getting a clean, actionable error.
+    service = AccessRequestService(InMemoryAuditLog())
+
+    with pytest.raises(ValueError, match="no access request found"):
+        service.advance(
+            "does-not-exist", AccessRequestStatus.IN_PROGRESS, actor="hr_admin", reason="test"
+        )
+
+
+class _AlwaysFailsAuditLog:
+    """Stands in for a real audit backend being unavailable (e.g. a locked SQLite file from a
+    second concurrent process) -- every `record()` call raises."""
+
+    def record(self, event: object) -> None:
+        raise RuntimeError("simulated audit backend failure")
+
+    def events_for(self, entity_ref: str) -> list[object]:
+        return []
+
+    def all_events(self) -> list[object]:
+        return []
+
+
+def test_submit_still_succeeds_when_the_audit_backend_is_down() -> None:
+    # Regression: audit_log.record() had no exception boundary in submit() -- a transient audit
+    # backend outage meant a candidate's legally-mandated FR-26 request was already stored in
+    # self._requests but the exception still propagated out of submit(), so the caller had no way
+    # to know the request actually went through (no request_id returned) and would plausibly
+    # resubmit into a duplicate.
+    service = AccessRequestService(_AlwaysFailsAuditLog())  # type: ignore[arg-type]
+
+    request = service.submit("cand-1", AccessRequestKind.ACCESS)  # must not raise
+
+    assert request.status is AccessRequestStatus.RECEIVED
+    assert service.requests_for("cand-1") == [request]
+
+
+def test_advance_still_succeeds_when_the_audit_backend_is_down() -> None:
+    service = AccessRequestService(_AlwaysFailsAuditLog())  # type: ignore[arg-type]
+    request = service.submit("cand-1", AccessRequestKind.ACCESS)
+
+    updated = service.advance(  # must not raise
+        request.request_id, AccessRequestStatus.IN_PROGRESS, actor="hr_alice", reason="reviewing"
+    )
+
+    assert updated.status is AccessRequestStatus.IN_PROGRESS
+
+
 def test_every_transition_is_audit_logged() -> None:
     audit_log = InMemoryAuditLog()
     service = AccessRequestService(audit_log)

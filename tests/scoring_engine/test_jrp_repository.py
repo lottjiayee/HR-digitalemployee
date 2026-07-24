@@ -148,3 +148,50 @@ def test_save_does_not_store_the_jrp_if_audit_logging_fails() -> None:
         repo.save(_jrp(version=1), actor="hr_alice", reason="initial")
 
     assert repo.get("role-1") is None
+
+
+def test_a_transient_failure_on_the_warning_event_leaves_no_misleading_jrp_saved_record() -> None:
+    # Regression: the "jrp_saved" event used to be written *before* the guideline-warning loop --
+    # a JRP triggering a warning whose audit write then failed still left a permanent "jrp_saved"
+    # event in the audit log, even though save() went on to raise and the store was never actually
+    # updated. An auditor reading that log would see "JRP saved by hr_alice" for a save that never
+    # took effect. "jrp_saved" must be the last audit write, immediately before the store mutation
+    # it vouches for -- so any earlier failure (like the warning write here) leaves no misleading
+    # success record behind.
+    class _FailsOnSecondCall:
+        def __init__(self) -> None:
+            self.actions: list[str] = []
+
+        def record(self, event: object) -> None:
+            if len(self.actions) == 1:
+                raise RuntimeError("simulated audit log failure")
+            self.actions.append(event.action)  # type: ignore[attr-defined]
+
+        def events_for(self, entity_ref: str) -> list[object]:
+            return []
+
+        def all_events(self) -> list[object]:
+            return []
+
+    audit_log = _FailsOnSecondCall()
+    repo = JRPRepository(audit_log)  # type: ignore[arg-type]
+    jrp = JRP(
+        jrp_id="role-2",
+        role_name="Graduate Analyst",
+        version=1,
+        weight_template=WeightTemplate.JUNIOR_GRADUATE,
+        weighted_criteria=(
+            WeightedCriterion(
+                dimension=Dimension.EDUCATIONAL_LEVEL,
+                weight=100.0,  # well above the 15% guideline default -> one warning event
+                curve=MatchingCurve.LINEAR,
+                required_education_level=EducationLevel.BACHELOR,
+            ),
+        ),
+    )
+
+    with pytest.raises(RuntimeError):
+        repo.save(jrp, actor="hr_alice", reason="graduate role JRP")
+
+    assert "jrp_saved" not in audit_log.actions
+    assert repo.get("role-2") is None

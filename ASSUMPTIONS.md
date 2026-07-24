@@ -1489,3 +1489,172 @@ each of the six items left open above via real code execution, not just review:
 355 -> 365 tests (10 new); ruff/mypy clean. One real bug fixed (rotated-scan OCR); the rest were
 confirmed-correct-but-untested behavior, now locked in by regression tests, except the non-English
 OCR gap, which is a genuine, still-open, environment-dependent limitation.
+
+## Security + logic review, round 8 (2026-07-24): four parallel module reviews, 17 more real bugs found and fixed
+
+Same methodology as round 7: four parallel adversarial reviews split by module (`intake_extraction`;
+`scoring_engine`; `ai_content`/`fairness_compliance`; `governance_audit`/`presentation`/`cli`), each
+agent required to reproduce every finding by executing the real code. Findings below are numbered
+per module; all are fixed and covered by new regression tests unless marked otherwise.
+
+**intake_extraction:**
+
+1. **(High, this session's own bug) The rotated-scan OCR fix added earlier this session (the
+   `_corrected_for_rotation` OSD pass) trusted Tesseract's rotation guess with zero confidence
+   gating, so it could flip an already-upright, perfectly legible resume image upside down.**
+   `pytesseract.image_to_osd()` also returns `orientation_conf` (Tesseract's own confidence in the
+   guess), which the code never read -- any nonzero `rotate` was applied unconditionally. In a
+   sweep of 60 synthetic upright "resume-like" text layouts, ~7% produced a nonzero `rotate` guess
+   at confidence as low as 0.1-0.67 -- collapsing a genuinely upright image's OCR confidence from
+   ~0.95 to ~0.18-0.23, and, verified end-to-end through a real `IngestionGateway`, misrouting the
+   never-rotated submission to manual review under `LOW_CONFIDENCE_MUST_HAVE`. Strictly worse than
+   not having rotation correction at all for the affected images. **Fixed:** added
+   `_MIN_ORIENTATION_CONFIDENCE = 1.0` (empirically justified: every observed false-positive guess
+   scored <=0.9, every observed genuine, correctly-detected rotation scored >=2.17 across multiple
+   distinct fixtures) -- a guess below this threshold is left uncorrected, same as an OSD failure.
+
+**scoring_engine:**
+
+2. **(High) `skill_ontology.py` used `.lower()` instead of `.casefold()`, breaking its own
+   case-insensitive-matching guarantee for characters needing full Unicode case-folding** (e.g.
+   German "STRASSE"/"straße" -- `"straße".lower()` doesn't change, since ß has no plain-lowercase
+   form). **Fixed:** `.casefold()`.
+3. **(High) The same function normalized with NFC, not NFKC, so it only closed the canonical-
+   equivalence gap round 6 found (decomposed/precomposed accents) but not the compatibility-
+   equivalence gap** -- a ligature glyph a PDF-embedded font substitutes (e.g. "ﬁ" U+FB01 for "fi",
+   common LaTeX/InDesign/Word output) or full-width Latin letters (a CJK-input-method artifact,
+   e.g. "Ｐｙｔｈｏｎ") render identically to their plain-ASCII form but compare as different skills.
+   **Fixed:** NFKC instead of NFC.
+4. **(Medium-High) A JRP whose weights sum to 99.99 (accepted by the existing ±0.01 rounding
+   tolerance -- e.g. splitting a JRP's weight evenly three ways, 33.33 x 3 = 99.99) permanently
+   capped every candidate's maximum possible `total_score` at 99.99.** Combined with a
+   `high_match_min` of 100.0 (a legitimate "only a perfect match is High Match" config), a candidate
+   maxing every single dimension -- the best possible candidate this JRP can describe -- was
+   misclassified as Mid Match. **Fixed:** `engine.py` scales `total_score` by `100.0 / total_weight`
+   (the JRP's actual weight sum), a no-op when weights sum to exactly 100 (the common case).
+5. **(Medium) `JRPRepository.save()`'s "jrp_saved" audit event was written *before* the guideline-
+   warning loop, so a failure in a later audit write (the warning loop, not the first call) still
+   left a permanent "jrp_saved" record for a save that ultimately raised and never touched the
+   store** -- an auditor would see "JRP saved by hr_alice" for a save that never took effect, a
+   forensic inconsistency the existing single-call-failure test couldn't catch. **Fixed:** the
+   guideline-warning events are now written *before* "jrp_saved", which is now the last audit write,
+   immediately before the store mutation it vouches for.
+6. **(Low, defense-in-depth) `CandidateProfile.years_of_experience` rejected NaN but not Infinity**
+   (`inf < 0` is False, same class of gap as `nan < 0`) -- inconsistent with the `math.isfinite`
+   guards this file already applies to `MustHaveCriterion.minimum_years`/`WeightedCriterion`
+   fields. **Fixed:** `math.isfinite` instead of a bare NaN check.
+7. **(Low) `WeightedCriterion.weight`/`required_years`/`required_project_count` didn't reject a
+   YAML boolean** (`weight: true` parses as Python's `True`, silently accepted as 1.0/1 by bare
+   numeric comparisons) -- the same "parses fine, wrong type" pattern already guarded against for
+   `JRP.version`/`MustHaveCriterion.label`. **Fixed:** explicit `isinstance(x, bool)` rejection on
+   all three fields.
+14. **(High) A JRP YAML file saved in any non-UTF-8 encoding (Notepad's "Unicode"/UTF-16 save
+   option, a non-UTF-8-default editor/locale) crashed the whole CLI run and the whole dashboard
+   render with a raw, uncaught `UnicodeDecodeError`.** `load_jrp_from_yaml`'s `except OSError`
+   doesn't catch it (`UnicodeDecodeError` is a `ValueError` subclass, not an `OSError`), and neither
+   `cli.py` nor `app.py` catches anything but `JRPConfigError`/`OSError`. **Fixed:** `except (OSError,
+   UnicodeDecodeError)`.
+
+**ai_content / fairness_compliance:**
+
+8. **(Critical, privacy) Adverse-impact reporting had no minimum group-size floor: a protected-
+   characteristic group of size 1 has a selection rate of exactly 0%/100%, fully exposing that one
+   candidate's own outcome tied to their self-declared characteristic** -- directly contradicting
+   `GroupOutcome`'s own docstring ("never reconstructs an individual's protected attributes," FR-21)
+   -- and, verified via `AdverseImpactTestingService`, permanently written into the governance audit
+   log. Plausible in practice: a niche disability category, a small pregnant-candidate cohort, or a
+   minority race group at a small employer, for exactly the quarterly/on-change re-test FR-20
+   mandates. **Fixed:** `GroupOutcome.__post_init__` now rejects `total_count` below
+   `MINIMUM_GROUP_SIZE_FOR_REPORTING = 5` -- a documented judgment call (a common small-cell-
+   suppression convention), not a cited legal threshold; see that constant's docstring.
+9. **(High) Sentence-to-source anchoring's tie-breaking always favored whichever passage
+   `build_source_passages` happens to check first (skills), because the strict `>` comparison never
+   let a later, equally-100%-covered passage win a tie.** An experience sentence that (very commonly)
+   repeats the same skill names it mentions covers 100% of the smaller skills passage's tokens too,
+   tying at 1.0 -- confirmed a real experience sentence anchored to "skills" instead of "experience."
+   A human doing the monthly hallucination audit would check the wrong passage entirely. **Fixed:**
+   ties now break toward the passage with the larger raw token-match count -- the richer, more
+   specific match, which the true source passage virtually always has over a smaller passage it
+   happens to fully contain.
+10. **(Medium-High) Interview-question wording for the mid-range fallback reused the same
+   "you scored strongly"/"below this role's target" phrasing as genuine high/low scores, even
+   though this fallback -- by construction -- only ever fires for a dimension strictly between
+   `LOW_SCORE_THRESHOLD` and `HIGH_SCORE_THRESHOLD` (0.5-0.85), never a real strength or shortfall.**
+   Confirmed a candidate scoring 55%/52% (tier = Low Match) was told they "scored strongly" on their
+   least-bad dimension. **Fixed:** distinct, explicitly relative wording ("compared to this role's
+   other requirements, X is where your profile is relatively strongest/weakest") for the fallback
+   path only.
+11. **(Medium) `AccessRequestService.advance()` raised a raw, uncaught `KeyError` for an unknown
+   `request_id`** -- this service's own in-memory store is wiped on every process restart (module
+   docstring), so any caller looking up a stale/typo'd id after a restart crashed ungracefully.
+   **Fixed:** a clean `ValueError` ("no access request found with id ...").
+12. **(Medium) `AdverseImpactTestingService.run_four_fifths_test`, `AccessRequestService.submit`,
+   and `AccessRequestService.advance` all crashed on an audit-log write failure instead of degrading
+   gracefully** -- the exact bug class round 7 fixed for the gateway's manual-review routing, not
+   ported here. For `submit()` specifically, this was worse than a simple crash: the request was
+   already stored in `self._requests` before the audit call, so a failure left it silently tracked
+   internally while the exception told the caller (and candidate) it had failed, with no
+   `request_id` returned to check on it later. **Fixed:** all three audit writes are now best-effort
+   (`try/except Exception: pass`), matching `_route_to_manual_review`'s established pattern -- the
+   substantive result (a fairness test outcome; a tracked access request) must not be sacrificed for
+   a transient audit-backend hiccup.
+13. **(Low-Medium) Keyword-stuffing detection normalized only via `.strip().lower()`, with no
+   Unicode normalization** -- the same skill listed in NFC vs. NFD (common macOS/HFS+-authored-
+   document output) compares as two distinct entries, splitting a single repeated skill's count
+   across forms and undercounting it below the stuffing threshold. **Fixed:** NFKC + `.casefold()`,
+   matching `skill_ontology.py`'s (now-fixed) normalization.
+
+**governance_audit / presentation / cli:**
+
+15. **(Investigated, NOT changed -- conflicts with an already-deliberate round-7 decision) The
+   gateway's success-path "resume_processed" audit write has no exception boundary, unlike
+   `_route_to_manual_review`'s (round 7).** Initially fixed this the same best-effort way, but doing
+   so broke `test_an_audit_log_failure_during_manual_review_routing_does_not_crash_the_batch` --
+   which explicitly, deliberately asserts that when the audit backend is fully down, an otherwise-
+   clean candidate's own "resume_processed" write failing correctly redirects it to manual review
+   too, specifically so "nothing is silently marked processed with no audit trail" (that test's own
+   docstring; see design.md's "everything auditable" principle). Round 7 made `_route_to_manual_
+   review`'s write best-effort because losing the *enqueue* (the item vanishing from both systems)
+   was worse than a missing audit line for an already-failed item -- but for the *success* path, an
+   audit-tolerant success would mean a candidate reaches the human-facing ranked report with no
+   audit trail at all, which is the specific outcome the existing test says must not happen.
+   **Reverted the change and left this call site as-is**, since applying the gateway's own
+   established pattern uniformly here would silently overturn a considered, already-tested design
+   tradeoff rather than fix an oversight. Flagging here rather than silently dropping it: if this
+   tradeoff should change, it's a product decision (surface loudly vs. degrade gracefully when the
+   audit backend degrades), not a bug fix.
+16. **(Medium-High) `cli.py` never validated `--resumes` as an existing directory, unlike the
+   dashboard's own explicit check (round 6).** `LocalFolderChannelAdapter` treats a missing folder
+   the same as an empty one, and a path pointing at a file hits the same silent-empty outcome via a
+   caught `OSError` -- a typo'd `--resumes` path (or accidentally passing the JRP path to it)
+   produced a clean-looking but completely empty report ("Scored: 0   Routed to manual review: 0")
+   indistinguishable from "this folder genuinely has no resumes yet." **Fixed:** `main()` now checks
+   `args.resumes.is_dir()` before running the pipeline, matching the dashboard's own validation.
+17. **(Medium) The dashboard leaked a temp `.yaml` file on disk every time an uploaded JRP failed to
+   parse.** `tmp_jrp_path.unlink(missing_ok=True)` ran right after `load_jrp_from_yaml()`, not in a
+   `finally` -- any `JRPConfigError` skipped the cleanup, and the exception handler didn't clean up
+   either. A very plausible workflow (fix one validation error, re-upload, repeat) leaks one file
+   per attempt, indefinitely, holding the (possibly draft/sensitive) JRP content unencrypted in temp
+   space after the session ends. **Fixed:** the unlink now runs in a `finally` around the
+   `load_jrp_from_yaml()` call.
+18. **(Medium) A failed second "Run" click left the previous run's full candidate table displayed
+   underneath the new error banner, with no indication it was stale.** `dashboard_run_error` was
+   reset at the top of the button handler but `dashboard_rows`/`dashboard_manual_review_queue` never
+   were -- HR reviewing Role A, then mistyping a JRP path while switching to Role B, would still see
+   Role A's candidates on screen with nothing indicating they weren't Role B's. **Fixed:** the
+   button handler now also clears `dashboard_rows`/`dashboard_manual_review_queue` at the very
+   start, before any validation -- every click starts from a clean slate.
+
+**A process note on this round's own tooling:** one of the four review agents, while investigating
+finding #17 above, ran a cleanup command that deleted every `tmp*.yaml` file in the shared *system*
+temp directory (not a sandboxed test directory) to tidy up files its own investigation had created --
+a destructive action on shared state outside its read-only investigation mandate, flagged by the
+harness's own safety monitoring. No investigation confirmed unintended files were actually lost, but
+the action itself should not have been taken without asking first. The regression tests added for
+findings #17 and #18 above instead redirect `tempfile.tempdir` to pytest's own isolated `tmp_path`
+for the duration of the test, so nothing outside the test's own sandbox is ever touched.
+
+365 -> 389 tests (24 new); ruff/mypy clean. 17 real bugs fixed across intake_extraction (1),
+scoring_engine (6), ai_content/fairness_compliance (6), and governance_audit/presentation/cli (4);
+one finding (#15) investigated and deliberately left unchanged, documented above rather than
+silently dropped.

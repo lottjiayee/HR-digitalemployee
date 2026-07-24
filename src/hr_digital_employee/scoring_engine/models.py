@@ -147,12 +147,18 @@ class WeightedCriterion:
     required_project_count: int | None = None
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.weight <= 100.0:
-            raise ValueError(f"weight must be in [0, 100], got {self.weight}")
+        # A quoted/typo'd YAML boolean (`weight: true`) parses as Python's `True`/`False`, which
+        # `isinstance(x, (int, float))`-style checks and arithmetic comparisons alike silently
+        # accept as 1/0 -- the same "parses fine, wrong type" pattern already guarded against
+        # elsewhere in this file (JRP.version, MustHaveCriterion.label) is closed here too, for
+        # consistency, on every numeric field below.
+        if isinstance(self.weight, bool) or not 0.0 <= self.weight <= 100.0:
+            raise ValueError(f"weight must be a number in [0, 100], got {self.weight!r}")
         if self.dimension is Dimension.MANDATORY_SKILLS and not self.required_skills:
             raise ValueError("MANDATORY_SKILLS criterion needs at least one required skill")
         if self.dimension is Dimension.EXPERIENCE_TENURE and not (
             self.required_years is not None
+            and not isinstance(self.required_years, bool)
             and math.isfinite(self.required_years)
             and self.required_years > 0
         ):
@@ -164,6 +170,7 @@ class WeightedCriterion:
             raise ValueError("EDUCATIONAL_LEVEL criterion needs a required_education_level")
         if self.dimension is Dimension.PROJECT_RELEVANCE and not (
             self.required_project_count is not None
+            and not isinstance(self.required_project_count, bool)
             and math.isfinite(self.required_project_count)
             and self.required_project_count > 0
         ):
@@ -241,12 +248,15 @@ class CandidateProfile:
     project_count: int
 
     def __post_init__(self) -> None:
-        # `nan < 0` is False, so a NaN would otherwise sail past this check, then silently poison
-        # every curve/total-score computation downstream with no exception anywhere (FR-9:
-        # nothing in this deterministic module should silently produce a wrong result).
-        if math.isnan(self.years_of_experience) or self.years_of_experience < 0:
+        # `nan < 0` is False and `inf < 0` is also False, so either would otherwise sail past a
+        # plain `< 0` check, then silently poison every curve/total-score computation downstream
+        # with no exception anywhere (FR-9: nothing in this deterministic module should silently
+        # produce a wrong result) -- the same class of gap already closed elsewhere in this file
+        # (MustHaveCriterion/WeightedCriterion) via `math.isfinite`.
+        if not math.isfinite(self.years_of_experience) or self.years_of_experience < 0:
             raise ValueError(
-                f"years_of_experience cannot be negative or NaN, got {self.years_of_experience}"
+                f"years_of_experience must be a finite, non-negative number, got "
+                f"{self.years_of_experience}"
             )
         if self.project_count < 0:
             raise ValueError(f"project_count cannot be negative, got {self.project_count}")

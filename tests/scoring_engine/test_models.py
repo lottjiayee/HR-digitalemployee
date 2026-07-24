@@ -152,9 +152,23 @@ def test_candidate_profile_rejects_negative_project_count() -> None:
 def test_candidate_profile_rejects_nan_years_of_experience() -> None:
     # Regression: `nan < 0` is False, so a NaN silently passed the old check and went on to
     # poison every curve/total-score computation downstream with no exception anywhere.
-    with pytest.raises(ValueError, match="NaN"):
+    with pytest.raises(ValueError, match="finite"):
         CandidateProfile(
             skills=(), years_of_experience=float("nan"), education_level=EducationLevel.NONE,
+            project_count=0,
+        )
+
+
+def test_candidate_profile_rejects_infinite_years_of_experience() -> None:
+    # Regression: `inf < 0` is also False (like `nan < 0`), so Infinity sailed past the same old
+    # negativity-only check just as NaN did, inconsistent with the `math.isfinite` guards this
+    # file already applies elsewhere (MustHaveCriterion.minimum_years, WeightedCriterion.
+    # required_years/required_project_count) -- every curve function treats `inf` as an
+    # automatic max score, so this would otherwise let a candidate silently max out a dimension
+    # with no genuinely-extracted number backing it.
+    with pytest.raises(ValueError, match="finite"):
+        CandidateProfile(
+            skills=(), years_of_experience=float("inf"), education_level=EducationLevel.NONE,
             project_count=0,
         )
 
@@ -198,6 +212,39 @@ def test_weighted_criterion_project_relevance_rejects_infinite_required_project_
             weight=20.0,
             curve=MatchingCurve.LINEAR,
             required_project_count=float("inf"),
+        )
+
+
+def test_weighted_criterion_rejects_a_bool_weight() -> None:
+    # Regression: a quoted/typo'd YAML boolean (`weight: true`) parses as Python's True, which a
+    # bare `0.0 <= weight <= 100.0` range check silently accepts as 1.0 -- the same "parses fine,
+    # wrong type" gap already closed elsewhere in this file (JRP.version, MustHaveCriterion.label).
+    with pytest.raises(ValueError, match="weight"):
+        WeightedCriterion(
+            dimension=Dimension.MANDATORY_SKILLS,
+            weight=True,  # type: ignore[arg-type]
+            curve=MatchingCurve.LINEAR,
+            required_skills=("Python",),
+        )
+
+
+def test_weighted_criterion_experience_tenure_rejects_a_bool_required_years() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        WeightedCriterion(
+            dimension=Dimension.EXPERIENCE_TENURE,
+            weight=30.0,
+            curve=MatchingCurve.LINEAR,
+            required_years=True,  # type: ignore[arg-type]
+        )
+
+
+def test_weighted_criterion_project_relevance_rejects_a_bool_required_project_count() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        WeightedCriterion(
+            dimension=Dimension.PROJECT_RELEVANCE,
+            weight=20.0,
+            curve=MatchingCurve.LINEAR,
+            required_project_count=True,  # type: ignore[arg-type]
         )
 
 

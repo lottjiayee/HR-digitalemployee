@@ -46,6 +46,7 @@ def anchor_for(sentence: str, passages: tuple[SourcePassage, ...]) -> str | None
     `sentence` to count as anchored."""
     best_field: str | None = None
     best_coverage = 0.0
+    best_match_count = 0
     for passage in passages:
         passage_tokens = _significant_tokens(passage.text)
         min_length = _MIN_SIGNIFICANT_LENGTH
@@ -65,9 +66,22 @@ def anchor_for(sentence: str, passages: tuple[SourcePassage, ...]) -> str | None
         # sentence's own short tokens (e.g. "Go") in play too, or the intersection is empty no
         # matter how verbatim the sentence actually is.
         sentence_tokens = _tokens(sentence, min_length=min_length)
-        coverage = len(passage_tokens & sentence_tokens) / len(passage_tokens)
-        if coverage > best_coverage:
+        match_count = len(passage_tokens & sentence_tokens)
+        coverage = match_count / len(passage_tokens)
+        # A strict `>` here used to let the first-checked passage keep a tie forever -- and ties
+        # are not rare: build_source_passages() always orders passages skills/projects/experience/
+        # education, and a sentence generated from a *later* passage (e.g. experience) routinely
+        # covers 100% of an *earlier*, smaller passage's tokens too (an experience narrative
+        # naturally repeats the same skill names) -- confirmed a real experience sentence anchored
+        # to "skills" instead of "experience" purely because skills happened to be checked first.
+        # Breaking ties by the larger raw match count favors the richer, more specific passage --
+        # the true source passage a sentence was generated from virtually always has at least as
+        # much matching content as a smaller passage it happens to fully contain.
+        if coverage > best_coverage or (
+            coverage == best_coverage and match_count > best_match_count
+        ):
             best_coverage = coverage
+            best_match_count = match_count
             best_field = passage.field_name
     return best_field if best_coverage >= MIN_PASSAGE_COVERAGE else None
 

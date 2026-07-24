@@ -16,14 +16,21 @@ def _normalize(skill: str) -> str:
     run of internal whitespace to a single space (not just leading/trailing), so e.g. "Team
     Leadership" with a doubled internal space still matches "Team Leadership" -- `.strip()` alone
     only trims the ends and would otherwise leave the two looking like different skills. Also
-    Unicode-NFC-normalized: a skill name typed in a JRP YAML (NFC -- precomposed accented
-    characters, the form any ordinary text editor saves) and the same skill as extracted from a
-    resume in NFD (decomposed -- common output of certain PDF text extractors and macOS/HFS+
-    -authored documents) render identically but are different code-point sequences, so without
-    this a candidate who genuinely has a required accented skill (e.g. "Développement Web") was
-    confirmed to fail that must-have gate and score zero on it, purely from an invisible
-    text-encoding difference."""
-    return " ".join(unicodedata.normalize("NFC", skill).split()).lower()
+    Unicode-NFKC-normalized (not just NFC): NFC alone collapses canonical equivalents -- a skill
+    name typed in a JRP YAML (NFC -- precomposed accented characters, the form any ordinary text
+    editor saves) and the same skill as extracted from a resume in NFD (decomposed -- common output
+    of certain PDF text extractors and macOS/HFS+-authored documents) render identically but are
+    different code-point sequences, so without at least NFC a candidate who genuinely has a
+    required accented skill (e.g. "Développement Web") was confirmed to fail that must-have gate
+    and score zero on it, purely from an invisible text-encoding difference. NFC alone still misses
+    *compatibility* equivalents, though: a ligature glyph a PDF-embedded font substitutes (e.g. the
+    single "ﬁ" character U+FB01 in place of "fi", common LaTeX/InDesign/Word output) or full-width
+    Latin letters (a common CJK-input-method artifact, e.g. "Ｐｙｔｈｏｎ") render identically to
+    their plain-ASCII form but likewise fail an exact match without NFKC's compatibility folding.
+    `.casefold()`, not `.lower()`, for the same reason: `.lower()` doesn't perform full Unicode
+    case-folding (e.g. German "STRASSE"/"straße" don't fold to the same string under `.lower()`),
+    which `str.casefold()` is specifically documented to handle correctly."""
+    return " ".join(unicodedata.normalize("NFKC", skill).split()).casefold()
 
 
 class SkillOntology(Protocol):

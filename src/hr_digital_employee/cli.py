@@ -124,6 +124,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error loading JRP config: {error}", file=sys.stderr)
         return 1
 
+    if not args.resumes.is_dir():
+        # Without this, a typo'd/nonexistent --resumes path (or accidentally passing the JRP
+        # path to --resumes) silently produced a clean-looking but completely empty report
+        # ("Scored: 0   Routed to manual review: 0") instead of any error -- LocalFolderChannel
+        # Adapter treats a missing folder the same as an empty one (channel_adapters.py), and a
+        # path pointing at a file rather than a directory hits the same silent-empty outcome via
+        # iterdir() raising NotADirectoryError, caught there too. Indistinguishable from "this
+        # folder genuinely has no resumes in it right now" -- matching the dashboard's own
+        # folder-path validation (app.py) rather than leaving the CLI silently weaker.
+        print(
+            f"Error: --resumes path not found or not a directory: {args.resumes}",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         audit_log: AuditLog = SqliteAuditLog(args.audit_db) if args.audit_db else InMemoryAuditLog()
         text_log = TextExtractionLog(args.text_log) if args.text_log else None

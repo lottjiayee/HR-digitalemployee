@@ -99,11 +99,13 @@ class ScoringEngine:
 
         breakdown: list[DimensionResult] = []
         total_score = 0.0
+        total_weight = 0.0
         for weighted_criterion in jrp.weighted_criteria:
             raw_ratio = _ratio_for(profile, weighted_criterion, self._skill_ontology)
             curve_score = apply_curve(weighted_criterion.curve, raw_ratio)
             contribution = curve_score * weighted_criterion.weight
             total_score += contribution
+            total_weight += weighted_criterion.weight
             breakdown.append(
                 DimensionResult(
                     dimension=weighted_criterion.dimension,
@@ -114,7 +116,14 @@ class ScoringEngine:
                 )
             )
 
-        total_score = round(total_score, 2)
+        # Scaled to `total_weight` rather than assumed to already be out of 100: JRP.__post_init__
+        # accepts any weight sum within 0.01 of 100 (rounding slop from e.g. splitting a JRP's
+        # weight evenly three ways, 33.33 x 3 = 99.99). Without this scaling, a candidate maxing
+        # every single dimension (curve_score == 1.0 throughout) on a JRP whose weights sum to
+        # 99.99 could only ever reach a total_score of 99.99 -- permanently short of a
+        # `high_match_min` of 100.0, misclassifying the best possible candidate as Mid Match. When
+        # weights sum to exactly 100 (the overwhelmingly common case), this scaling is a no-op.
+        total_score = round(total_score * 100.0 / total_weight, 2)
         return Score(
             jrp_id=jrp.jrp_id,
             jrp_version=jrp.version,

@@ -65,10 +65,15 @@ def load_jrp_from_yaml(path: Path) -> JRP:
     nonexistent/unreadable path, etc."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         # A missing file, a directory given by mistake, a permissions error -- every caller of
         # this function already catches JRPConfigError specifically (cli.py, the dashboard); a
         # raw FileNotFoundError/PermissionError previously escaped uncaught as a crash instead.
+        # UnicodeDecodeError is a ValueError subclass, not an OSError, so it needs its own case:
+        # a JRP YAML file saved in any non-UTF-8 encoding (Notepad's "Unicode"/UTF-16 option, a
+        # non-UTF-8-default editor/locale) otherwise crashed the whole CLI run or dashboard render
+        # with a raw traceback instead of the same clean "cannot read file" error every other
+        # unreadable-file case produces.
         raise JRPConfigError(f"{path}: cannot read file: {error}") from error
     try:
         raw = yaml.safe_load(text)

@@ -29,18 +29,37 @@ class DemographicRecord:
     declared_at: datetime
 
 
+MINIMUM_GROUP_SIZE_FOR_REPORTING = 5
+"""Small-cell suppression floor (a common statistical-disclosure-control convention): below this,
+a group's selection rate can fully or near-fully reveal one specific member's individual outcome --
+a group of size 1 has a selection rate of exactly 0% or 100%, directly exposing whether *that one
+candidate* (tied to their self-declared protected characteristic) was selected. `GroupOutcome`'s
+own docstring promises this "never reconstructs an individual's protected attributes" (FR-21); a
+missing floor let a real-but-small protected-characteristic cohort (a niche disability category, a
+small pregnant-candidate group, a minority race group at a small employer -- all plausible for the
+quarterly/on-change re-test FR-20 mandates) become exactly that, written permanently into the
+governance audit log via `AdverseImpactTestingService`. No specific number is mandated by
+requirement.md/test.md -- this is a documented judgment call, not a cited legal threshold; see
+ASSUMPTIONS.md."""
+
+
 @dataclass(frozen=True)
 class GroupOutcome:
     """One protected-characteristic group's selection-rate inputs for one JRP (aggregate-only --
-    never reconstructs an individual's protected attributes, per FR-21)."""
+    never reconstructs an individual's protected attributes, per FR-21). Must represent at least
+    `MINIMUM_GROUP_SIZE_FOR_REPORTING` people -- see that constant's docstring."""
 
     group_label: str
     selected_count: int
     total_count: int
 
     def __post_init__(self) -> None:
-        if self.total_count <= 0:
-            raise ValueError(f"total_count must be positive, got {self.total_count}")
+        if self.total_count < MINIMUM_GROUP_SIZE_FOR_REPORTING:
+            raise ValueError(
+                f"total_count must be at least {MINIMUM_GROUP_SIZE_FOR_REPORTING} to report a "
+                f"group's outcome without risking exposing an individual's, got "
+                f"{self.total_count} for group {self.group_label!r}"
+            )
         if not 0 <= self.selected_count <= self.total_count:
             raise ValueError(
                 f"selected_count ({self.selected_count}) must be between 0 and "

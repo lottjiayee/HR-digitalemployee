@@ -11,8 +11,10 @@ from image_fixtures import (
     build_sidebar_resume_image,
     rotate_image_bytes,
 )
+from PIL import Image
 
 from hr_digital_employee.intake_extraction import ocr
+from hr_digital_employee.intake_extraction.ocr import _corrected_for_rotation
 
 requires_tesseract = pytest.mark.skipif(
     not ocr.tesseract_available(),
@@ -113,6 +115,35 @@ def test_a_rotated_scan_is_corrected_before_ocr(degrees: int) -> None:
     assert "Facility Property Manager | February 2017" in rotated_text
     assert rotated_confidence == pytest.approx(upright_confidence, abs=0.05)
     assert rotated_text == upright_text
+
+
+def test_a_low_confidence_orientation_guess_is_not_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: Tesseract's OSD pass can misjudge an upright, never-rotated image as needing a
+    # 90/180/270-degree turn -- confirmed empirically this happens for ordinary legible text about
+    # 1 in 15 times, always at a confidence well below what a genuinely-rotated image scores.
+    # Applying every nonzero guess unconditionally would silently flip perfectly good images upside
+    # down, collapsing OCR confidence -- worse than not correcting rotation at all.
+    upright_image = Image.new("RGB", (10, 10), color="white")
+    monkeypatch.setattr(
+        "pytesseract.image_to_osd",
+        lambda *args, **kwargs: {"rotate": 180, "orientation_conf": 0.5},
+    )
+
+    corrected = _corrected_for_rotation(upright_image)
+
+    assert corrected is upright_image
+
+
+def test_a_high_confidence_orientation_guess_is_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+    image = Image.new("RGB", (10, 20), color="white")
+    monkeypatch.setattr(
+        "pytesseract.image_to_osd",
+        lambda *args, **kwargs: {"rotate": 90, "orientation_conf": 5.0},
+    )
+
+    corrected = _corrected_for_rotation(image)
+
+    assert corrected.size == (20, 10)  # 90-degree rotation with expand=True swaps width/height
 
 
 @requires_tesseract

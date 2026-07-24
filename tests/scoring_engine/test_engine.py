@@ -12,6 +12,7 @@ from hr_digital_employee.scoring_engine.models import (
     MustHaveCriterion,
     MustHaveKind,
     Tier,
+    TierThresholds,
     WeightedCriterion,
     WeightTemplate,
 )
@@ -147,6 +148,60 @@ def test_full_scoring_matches_hand_calculated_total() -> None:
     assert score.total_score == 92.5
     assert score.tier is Tier.HIGH_MATCH
     assert score.parser_version == "stub-0.1.0"  # NFR-5: parser version, not just engine version
+
+
+def test_a_maxed_out_candidate_scores_exactly_100_even_when_weights_sum_to_99_99() -> None:
+    # Regression: JRP.__post_init__ accepts any weight sum within 0.01 of 100 (legitimate rounding
+    # slop, e.g. splitting a JRP's weight evenly three ways -- 33.33 x 3 = 99.99). Before this fix,
+    # total_score was the raw weighted sum, so a JRP whose weights summed to 99.99 could never
+    # score higher than 99.99 -- permanently below a `high_match_min` of 100.0. A candidate who
+    # maxes every single dimension (curve_score == 1.0 throughout) is the best possible candidate
+    # this JRP can describe and must reach the top tier, not be misclassified as Mid Match purely
+    # from the weight-sum's rounding slop.
+    jrp = JRP(
+        jrp_id="role-slop",
+        role_name="Backend Engineer",
+        version=1,
+        weight_template=WeightTemplate.GENERAL,
+        weighted_criteria=(
+            WeightedCriterion(
+                dimension=Dimension.MANDATORY_SKILLS,
+                weight=39.99,
+                curve=MatchingCurve.LINEAR,
+                required_skills=("Python",),
+            ),
+            WeightedCriterion(
+                dimension=Dimension.EXPERIENCE_TENURE,
+                weight=30.0,
+                curve=MatchingCurve.LINEAR,
+                required_years=2.0,
+            ),
+            WeightedCriterion(
+                dimension=Dimension.EDUCATIONAL_LEVEL,
+                weight=15.0,
+                curve=MatchingCurve.LINEAR,
+                required_education_level=EducationLevel.BACHELOR,
+            ),
+            WeightedCriterion(
+                dimension=Dimension.PROJECT_RELEVANCE,
+                weight=15.0,
+                curve=MatchingCurve.LINEAR,
+                required_project_count=2,
+            ),
+        ),
+        tier_thresholds=TierThresholds(high_match_min=100.0, mid_match_min=60.0),
+    )
+    profile = CandidateProfile(
+        skills=("Python",),
+        years_of_experience=10.0,
+        education_level=EducationLevel.DOCTORATE,
+        project_count=10,
+    )
+
+    score = ScoringEngine().score(profile, jrp, parser_version="stub-0.1.0")
+
+    assert score.total_score == 100.0
+    assert score.tier is Tier.HIGH_MATCH
 
 
 def test_scoring_is_deterministic_for_identical_inputs() -> None:

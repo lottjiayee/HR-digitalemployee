@@ -50,6 +50,38 @@ def test_identity_ontology_resolves_nfc_and_nfd_forms_of_the_same_skill() -> Non
     assert ontology.resolves_same_skill(nfc_form, nfd_form) is True
 
 
+def test_identity_ontology_resolves_german_eszett_case_folding() -> None:
+    # Regression: `.lower()` does not perform full Unicode case-folding, so German "STRASSE"
+    # (the conventional all-caps form, e.g. a certificate title) and "straße" (its native-
+    # orthography lowercase form) did not compare equal despite being the same word --
+    # `str.casefold()` is what Python's own docs recommend specifically for caseless matching.
+    ontology = IdentitySkillOntology()
+
+    assert ontology.resolves_same_skill("STRASSENVERKEHR", "straßenverkehr") is True
+
+
+def test_identity_ontology_resolves_a_ligature_to_its_plain_ascii_form() -> None:
+    # Regression: a ligature glyph a PDF-embedded font substitutes (e.g. U+FB01 "ﬁ" in place of
+    # "fi" -- common LaTeX/InDesign/Word-embedded-font output, directly relevant since this
+    # system's own PDF pipeline uses pypdf) renders identically to its plain-ASCII form but is a
+    # different code point; NFC alone (round 6's fix) only collapses canonical equivalents
+    # (decomposed/precomposed accents), not compatibility equivalents like ligatures -- NFKC does.
+    ontology = IdentitySkillOntology()
+
+    plain = "Certified finance Professional"
+    ligature = "Certified ﬁnance Professional"
+    assert ontology.resolves_same_skill(plain, ligature) is True
+
+
+def test_identity_ontology_resolves_full_width_latin_letters() -> None:
+    # Regression: full-width Latin letters (a common CJK-input-method artifact) render
+    # identically to their plain-ASCII form but are different code points, requiring NFKC's
+    # compatibility folding (not just NFC) to match.
+    ontology = IdentitySkillOntology()
+
+    assert ontology.resolves_same_skill("Python", "Ｐｙｔｈｏｎ") is True
+
+
 def test_t2_14_synonym_map_ontology_resolves_different_phrasings_to_the_same_skill() -> None:
     ontology = SynonymMapSkillOntology([("led a team", "team leadership")])
 

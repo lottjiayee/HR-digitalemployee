@@ -79,6 +79,13 @@ with st.expander("Or point at a local folder instead (advanced)", expanded=False
 # ── run button ─────────────────────────────────────────────────────────────────────────────────
 if st.button("Run", type="primary"):
     st.session_state.dashboard_run_error = None
+    # Every click starts from a clean slate: without this, a failed run (e.g. a mistyped JRP path
+    # while switching to a different role) left the *previous* successful run's full candidate
+    # table sitting on screen underneath the new error banner, with nothing indicating it was
+    # stale -- risking one role's candidates being reviewed/acted on under the mistaken belief
+    # they belonged to the role just entered.
+    st.session_state.dashboard_rows = []
+    st.session_state.dashboard_manual_review_queue = None
 
     # Decide which input mode to use: uploaded files take priority over folder paths.
     use_uploads = bool(uploaded_resumes or uploaded_jrp)
@@ -106,8 +113,17 @@ if st.button("Run", type="primary"):
                     tmp_jrp.write(jrp_bytes)
                     tmp_jrp_path = Path(tmp_jrp.name)
 
-                jrp = load_jrp_from_yaml(tmp_jrp_path)
-                tmp_jrp_path.unlink(missing_ok=True)
+                try:
+                    jrp = load_jrp_from_yaml(tmp_jrp_path)
+                finally:
+                    # In a `finally`, not right after the call that can raise: an invalid/
+                    # malformed uploaded JRP (bad YAML, missing keys) previously left this temp
+                    # file behind on every failed attempt -- confirmed via a real run that a
+                    # single rejected upload leaks one file into the OS temp directory, never
+                    # cleaned up. A very plausible workflow (fix one validation error, re-upload,
+                    # repeat) leaks one file per attempt, indefinitely, and the leaked file holds
+                    # the (possibly draft/sensitive) JRP content unencrypted after the session ends.
+                    tmp_jrp_path.unlink(missing_ok=True)
 
                 uploads = [(f.name, f.read()) for f in uploaded_resumes]
                 new_rows, new_manual_review_queue = build_dashboard_rows_from_uploads(
